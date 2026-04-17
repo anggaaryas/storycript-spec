@@ -1,28 +1,37 @@
 # .StoryScript Language Specification
 
 ## 1. Global Initialization
-Before any scenes are parsed, the engine must define global variables and load actor assets into memory. This is strictly handled in the reserved `* INIT` block.
+Before any scenes are parsed, the engine must define global variables, load actor assets into memory, and explicitly define the game's entry point. This is strictly handled in the reserved `* INIT` block.
 
 **Syntax Rules:**
 * Must be the absolute first block evaluated by the compiler.
 * Handles global variable declaration (`$`).
 * Handles character registration (`@actor`) using block-based dictionary syntax.
+* **Mandatory:** Must contain exactly one `@start` directive pointing to the first scene.
 
 ```plaintext
 * INIT {
     // Variable Registration
-    $clearance_level = 1;
-    $has_admin_key = false;
+    $system_stability = 45;
+    $manual_override = false;
 
     // Standard Actor (With Portraits)
-    @actor FL "Flaurel" {
-        neutral -> "fl_neutral.png"
-        nervous -> "fl_nerv.png"
-        happy -> "fl_happy.png"
+    @actor TEO "Teona" {
+        neutral -> "teo_neutral.png"
+        calm -> "teo_calm.png"
+        focus -> "teo_focus.png"
+    }
+    @actor GIP "Gippie" {
+        default -> "gip_smile.png"
+        playful -> "gip_wink.png"
+        alert -> "gip_alert.png"
     }
 
-    // Portrait-less Actor (Voice-only or un-drawn)
-    @actor SYS "System AI";
+    // Actor without portrait
+    @actor SYS "System";
+
+    // Explicit Entry Point
+    @start server_core_hub;
 }
 ```
 
@@ -52,10 +61,10 @@ The player-facing phase. The UI sequentially renders text and dialogue. Executio
 Standard C-style conditionals are supported in both `#PREP` and `#STORY` blocks. Variables must be prefixed with `$`.
 
 ```plaintext
-if ($clearance_level >= 2) {
-    $access_granted = true;
+if ($system_stability <= 30) {
+    $critical_warning = true;
 } else {
-    $access_granted = false;
+    $critical_warning = false;
 }
 ```
 
@@ -65,8 +74,8 @@ Directives tell the visual/audio engine what to queue.
 | Directive | Purpose | Syntax | Example |
 | :--- | :--- | :--- | :--- |
 | **@bg** | Loads a background image. | `@bg "<path>"` | `@bg "server_room.png"` |
-| **@bgm** | Plays looping background music. | `@bgm "<path>" / "STOP"` | `@bgm "tense_hum.wav"` |
-| **@sfx** | Plays a one-shot sound effect. | `@sfx "<path>"` | `@sfx "alarm.wav"` |
+| **@bgm** | Plays looping background music. | `@bgm "<path>" / STOP` | `@bgm "tense_hum.wav"` |
+| **@sfx** | Plays a one-shot sound effect. | `@sfx "<path>"` | `@sfx "spark.wav"` |
 
 ### Dialogue & Narration (Only in `#STORY`)
 Narration is handled via standard string literals. Dialogue utilizes the registered Actor IDs from the `INIT` block. 
@@ -77,13 +86,13 @@ The parser enforces strict rules based on the presence of parentheses to prevent
 * **Without Portrait:** Omit parentheses entirely. The engine renders the display name and text with no sprite.
 
 ```plaintext
-"The terminal sparks violently."
+"The main console flashes red."
 
 // Renders sprite and text
-FL(nervous, Left): "I don't think that worked."
+TEO(focus, Left): "We need to isolate the memory leak."
 
-// Renders text only
-SYS: "Warning. Intruder detected."
+// Renders text only (if using a portrait-less setup or quick text)
+GIP: "On it, boss!"
 ```
 
 ### Navigation Directives (Only in `#STORY`)
@@ -94,10 +103,10 @@ Halts the engine and renders a user-selectable menu. Options map to the next sce
 
 ```plaintext
 @choice {
-    "Examine the terminal" -> scene_examine;
+    "Run diagnostic sweep" -> scene_diagnostic;
     
-    if ($has_admin_key == true) {
-        "Initiate manual override" -> scene_override;
+    if ($manual_override == true) {
+        "Force hard reboot" -> scene_reboot;
     }
 }
 ```
@@ -106,8 +115,8 @@ Halts the engine and renders a user-selectable menu. Options map to the next sce
 Automatically transitions to the next scene without user input. Used for script chunking, invisible logic routing hubs, or seamless cinematic transitions.
 
 ```plaintext
-"The screen fades to black."
-@jump scene_next_day;
+"The servers finally quiet down into a steady hum."
+@jump scene_rest_period;
 ```
 
 ---
@@ -116,64 +125,71 @@ Automatically transitions to the next scene without user input. Used for script 
 
 ```plaintext
 * INIT {
-    $trust_metric = 5;
-    $has_override = false;
+    $system_stability = 40;
+    $bypass_key = false;
     
-    @actor FL "Flaurel" {
-        neutral -> "fl_neutral.png"
-        nervous -> "fl_nerv.png"
-        happy -> "fl_happy.png"
+    @actor TEO "Teona" {
+        calm -> "teo_calm.png"
+        focus -> "teo_focus.png"
     }
     
-    @actor SYS "Angarsa System";
+    @actor GIP "Gippie" {
+        default -> "gip_smile.png"
+        playful -> "gip_wink.png"
+        alert -> "gip_alert.png"
+    }
+    
+    @start server_core_hub;
 }
 
-* lab_entrance {
+* server_core_hub {
     
     #PREP
-    @bg "angarsa_labs_entrance.png"
+    @bg "core_chamber.png"
     
-    if ($trust_metric > 4) {
-        @bgm "calm_drone.wav"
+    if ($system_stability < 50) {
+        @bgm "warning_siren.wav"
     } else {
-        @bgm "tense_drone.wav"
+        @bgm "steady_hum.wav"
     }
 
     #STORY
-    "The heavy blast doors of the main laboratory loom ahead."
+    "Sparks shower from the ceiling as the primary coolant line shudders."
 
-    FL(neutral, Left): "We finally made it to the central terminal."
+    TEO(calm, Left): "Variance is up by twelve percent. Gippie, run a sector scan."
 
-    if ($trust_metric > 4) {
-        FL(happy, Left): "I'm really glad you're the one watching my back."
+    if ($system_stability < 50) {
+        GIP(alert, Right): "Yikes! Sector four is throwing a major temper tantrum, Teona!"
+        TEO(focus, Left): "Understood. Let's patch the routing matrix before it cascades."
     } else {
-        FL(nervous, Left): "Stay sharp. The drones are active."
+        GIP(playful, Right): "Easy peasy! Just a little hiccup in sector four."
+        TEO(focus, Left): "Understood. Let's patch the routing matrix before it cascades."
     }
 
-    SYS: "Please present valid identification."
-
     @choice {
-        "Scan standard ID card" -> scene_standard_entry;
-        "Attempt manual bypass" -> scene_hack;
+        "Reroute coolant manually" -> scene_coolant_fix;
+        "Deploy Gippie to the mainframe" -> scene_gippie_deploy;
 
-        if ($has_override == true) {
-            "Use Admin Override" -> scene_admin_entry;
+        if ($bypass_key == true) {
+            "Use Admin Bypass to purge cache" -> scene_admin_purge;
         }
     }
 }
 
-* scene_hack {
+* scene_gippie_deploy {
     
     #PREP
-    @bgm "STOP"
-    @sfx "alarm_blare.wav"
-    $trust_metric = $trust_metric - 2;
+    @bgm STOP
+    @sfx "digital_dive.wav"
+    $system_stability = $system_stability + 30;
 
     #STORY
-    "You pry open the panel and short the connection. Sparks fly."
-    FL(nervous, Left): "Are you crazy?! You just triggered the countermeasures!"
+    "Gippie's avatar dissolves into a stream of green code, diving directly into the terminal."
     
-    @jump scene_game_over;
+    GIP(playful, Center): "Wheeee! Sweeping out the bad sectors now!"
+    TEO(calm, Left): "Good work. System is stabilizing."
+    
+    @jump scene_rest_period;
 }
 
 ...
