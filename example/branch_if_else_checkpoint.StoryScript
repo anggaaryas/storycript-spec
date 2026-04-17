@@ -1,0 +1,97 @@
+// ============================================================================
+// IF/ELSE FEATURE EXAMPLE: CHECKPOINT UNDER RAIN
+// Focus: straightforward if/else branching based on story state.
+// ============================================================================
+
+* INIT {
+    $has_route_map = false
+    $guard_trust = 35
+
+    @actor RIN "Rin" {
+        calm -> "rin_calm.png"
+        tense -> "rin_tense.png"
+    }
+
+    @actor GUARD "North Gate Guard" {
+        neutral -> "guard_neutral.png"
+        stern -> "guard_stern.png"
+    }
+
+    @start crossroads
+}
+
+* crossroads {
+
+    #PREP
+    @bg "rain_crossroads.png"
+    @bgm "rain_loop.ogg"
+
+    #STORY
+    "Rain hammers the old district as Rin reaches the northern checkpoint."
+    RIN(calm, Left): "I need passage before floodwater reaches the lower market."
+
+    @choice {
+        "Search the shrine archive for a legal route map" -> shrine_archive
+        "Go directly to the checkpoint and argue your case" -> direct_appeal
+    }
+}
+
+* shrine_archive {
+
+    #PREP
+    $has_route_map = true
+    $guard_trust += 10
+    @sfx "page_flip.wav"
+
+    #STORY
+    "Between wet scrolls and broken lamps, Rin finds the stamped evacuation chart."
+    RIN(calm, Left): "This seal should be enough to pass."
+    @jump north_gate
+}
+
+* direct_appeal {
+
+    #PREP
+    $guard_trust -= 10
+    @sfx "thunder_close.wav"
+
+    #STORY
+    "Rin reaches the checkpoint empty-handed while sirens wail in the distance."
+    RIN(tense, Left): "I came straight here. People are trapped behind me."
+    @jump north_gate
+}
+
+* north_gate {
+
+    #PREP
+    @bg "north_gate.png"
+
+    #STORY
+    GUARD(stern, Right): "Papers. Route code. Anything official?"
+
+    if ($has_route_map == true) {
+        RIN(calm, Left): "Stamped and signed. Open the barrier now."
+        GUARD(neutral, Right): "Verified. Gate is open. Move quickly."
+        @jump cleared_passage
+    } else {
+        RIN(tense, Left): "No paper, only witnesses and rising water."
+        GUARD(stern, Right): "No map, no passage. Orders stand."
+        @jump denied_passage
+    }
+}
+
+* cleared_passage {
+
+    #STORY
+    "The steel barrier lifts, and evacuees rush through the rain-lit corridor."
+    RIN(calm, Left): "One decision, one document, and a whole street gets another sunrise."
+    @end
+}
+
+* denied_passage {
+
+    #STORY
+    "The barrier stays shut. The alley behind Rin fills with anxious voices."
+    RIN(tense, Left): "Then I find another way before the flood finds us first."
+    @end
+}

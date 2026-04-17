@@ -1,0 +1,105 @@
+// ============================================================================
+// MATH FEATURE EXAMPLE: TRADE ROUTE AT DAWN
+// Focus: arithmetic updates and comparisons in #PREP and #STORY conditions.
+// ============================================================================
+
+* INIT {
+    $credits = 12
+    $repair_cost = 9
+    $bonus = 4
+    $risk_penalty = 2
+    $generator_power = 6
+    $route_score = 0
+    $deal_done = false
+
+    @actor MIRA "Mira" {
+        calm -> "mira_calm.png"
+        grin -> "mira_grin.png"
+        worried -> "mira_worried.png"
+    }
+
+    @actor JAX "Jax" {
+        neutral -> "jax_neutral.png"
+        eager -> "jax_eager.png"
+        tired -> "jax_tired.png"
+    }
+
+    @start market_gate
+}
+
+* market_gate {
+
+    #PREP
+    @bg "sunrise_market.png"
+    @bgm "market_loop.ogg"
+    $route_score = $credits + $bonus - $risk_penalty
+
+    #STORY
+    "At dawn, the Clockwork Bazaar opens with iron shutters and kettle steam."
+    MIRA(calm, Left): "If we can afford the reactor coil today, the town lights stay on tonight."
+    JAX(eager, Right): "Current route score is credits plus bonus minus risk. We might just make it."
+
+    if ($route_score >= $repair_cost) {
+        MIRA(grin, Left): "Numbers are in our favor. We can bargain from strength."
+    } else {
+        MIRA(worried, Left): "We are short. One bad turn and we lose the deal."
+    }
+
+    @choice {
+        "Take the direct lane (consume 2 generator power)" -> direct_lane
+        "Take the storm drain shortcut (gain bonus, increase risk)" -> storm_drain
+    }
+}
+
+* direct_lane {
+
+    #PREP
+    @sfx "cart_rattle.wav"
+    $generator_power -= 2
+    $credits -= 1
+    $route_score = $credits + $bonus - $risk_penalty
+
+    #STORY
+    "The direct lane is fast but expensive. Toll drones hover above the bridge."
+    JAX(tired, Right): "Power is dropping, but we got here early."
+    @jump bargain
+}
+
+* storm_drain {
+
+    #PREP
+    @sfx "water_echo.wav"
+    $bonus += 1
+    $risk_penalty += 1
+    $generator_power -= 1
+    $route_score = $credits + $bonus - $risk_penalty
+
+    #STORY
+    "You steer the cart through a flooded service tunnel."
+    MIRA(calm, Left): "Messy route, but every spare part we salvage adds leverage."
+    @jump bargain
+}
+
+* bargain {
+
+    #PREP
+    if ($route_score >= $repair_cost) {
+        $deal_done = true
+        $credits = $credits - $repair_cost
+    } else {
+        $deal_done = false
+    }
+
+    #STORY
+    "The coil merchant taps her ledger, waiting for your offer."
+
+    if ($deal_done == true) {
+        MIRA(grin, Left): "Deal. The grid gets another week of life."
+        JAX(eager, Right): "And we still have enough credits for supper."
+    } else {
+        MIRA(worried, Left): "We cannot cover the full cost. The district stays dark tonight."
+        JAX(tired, Right): "Tomorrow we run new numbers and try again."
+    }
+
+    @end
+}

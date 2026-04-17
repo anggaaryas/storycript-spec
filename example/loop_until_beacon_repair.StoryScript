@@ -1,0 +1,215 @@
+// ============================================================================
+// LOOP-UNTIL-CONDITION FEATURE EXAMPLE: BEACON REPAIR
+// Focus: looping scenes with @jump until a condition is met.
+// ============================================================================
+
+* INIT {
+    $fragments = 0
+    $fatigue = 0
+    $signal_stable = false
+    $ridge_fragment_found = false
+    $hull_fragment_found = false
+    $trench_fragment_found = false
+    $found_new_part = false
+
+    @actor ILYA "Ilya" {
+        focused -> "ilya_focused.png"
+        tired -> "ilya_tired.png"
+        relieved -> "ilya_relieved.png"
+    }
+
+    @actor ORB "Survey Orb" {
+        neutral -> "orb_neutral.png"
+        bright -> "orb_bright.png"
+    }
+
+    @start crash_site
+}
+
+* crash_site {
+
+    #PREP
+    @bg "crash_valley.png"
+    @bgm "wind_static.ogg"
+
+    #STORY
+    "A broken distress beacon lies in pieces across the valley floor."
+    ORB(neutral, Right): "Recovery target: three signal fragments required for full assembly."
+
+    if ($fragments >= 3) {
+        ILYA(relieved, Left): "That is enough. We rebuild now."
+        @jump assemble_beacon
+    } else {
+        ILYA(focused, Left): "Not enough parts yet. Keep searching."
+
+        @choice {
+            if ($ridge_fragment_found == false) {
+                "Search the northern ridge" -> search_ridge
+            }
+            if ($hull_fragment_found == false) {
+                "Search the burned transport hull" -> search_hull
+            }
+            if ($trench_fragment_found == false) {
+                "Search the frozen relay trench" -> search_trench
+            }
+            "Check current recovery progress" -> review_progress
+        }
+    }
+}
+
+* search_ridge {
+
+    #PREP
+    @sfx "gravel_steps.wav"
+    $found_new_part = false
+    if ($ridge_fragment_found == false) {
+        $ridge_fragment_found = true
+        $fragments += 1
+        $found_new_part = true
+    }
+    $fatigue += 1
+
+    #STORY
+    if ($found_new_part == true) {
+        "You climb the ridge and pry a copper shard from blackened stone."
+        ILYA(tired, Left): "One new fragment secured. Legs are getting heavy."
+    } else {
+        "You sweep the ridge again, but only wind and ash greet you."
+        ILYA(tired, Left): "No new fragment here. We already took the useful piece."
+    }
+    @jump crash_site
+}
+
+* search_hull {
+
+    #PREP
+    @sfx "metal_creak.wav"
+    $found_new_part = false
+    if ($hull_fragment_found == false) {
+        $hull_fragment_found = true
+        $fragments += 1
+        $found_new_part = true
+    }
+    $fatigue += 2
+
+    #STORY
+    if ($found_new_part == true) {
+        "Inside the wrecked hull, a guidance chip still blinks under ash."
+        ORB(bright, Right): "New fragment recovered. Integrity acceptable."
+    } else {
+        "You crawl through the same wrecked hull and find only torn insulation."
+        ORB(neutral, Right): "No recoverable fragment remains in this location."
+    }
+    @jump crash_site
+}
+
+* search_trench {
+
+    #PREP
+    @sfx "ice_crack.wav"
+    $found_new_part = false
+    if ($trench_fragment_found == false) {
+        $trench_fragment_found = true
+        $fragments += 1
+        $found_new_part = true
+    }
+    $fatigue += 1
+
+    #STORY
+    if ($found_new_part == true) {
+        "At the trench bottom, you recover an antenna fork from frozen mud."
+        ILYA(focused, Left): "Another fragment secured."
+    } else {
+        "The trench yields nothing but cracked ice and old footprints."
+        ILYA(tired, Left): "No fragment left here."
+    }
+    @jump crash_site
+}
+
+* review_progress {
+
+    #STORY
+    "Ilya checks the beacon frame and marks the recovery log by hand."
+
+    if ($ridge_fragment_found == true) {
+        ORB(bright, Right): "Ridge fragment: secured."
+    } else {
+        ORB(neutral, Right): "Ridge fragment: missing."
+    }
+
+    if ($hull_fragment_found == true) {
+        ORB(bright, Right): "Hull fragment: secured."
+    } else {
+        ORB(neutral, Right): "Hull fragment: missing."
+    }
+
+    if ($trench_fragment_found == true) {
+        ORB(bright, Right): "Trench fragment: secured."
+    } else {
+        ORB(neutral, Right): "Trench fragment: missing."
+    }
+
+    ILYA(focused, Left): "Good. We move to the next unchecked site."
+    @jump crash_site
+}
+
+* assemble_beacon {
+
+    #PREP
+    @bg "beacon_workbench.png"
+    if ($fatigue <= 4) {
+        $signal_stable = true
+    } else {
+        $signal_stable = false
+    }
+
+    #STORY
+    "Screws, wire, and memory crystal lock into place as the beacon hums to life."
+
+    if ($signal_stable == true) {
+        ORB(bright, Right): "Transmission lock achieved. Rescue corridor opened."
+        ILYA(relieved, Left): "Loop complete. We are getting out of this valley."
+        @end
+    } else {
+        ORB(neutral, Right): "Signal drift detected. Calibration failed due to operator fatigue."
+
+        @choice {
+            "Rest at camp and retry calibration" -> camp_rest
+            "Force another calibration immediately" -> forced_calibration
+        }
+    }
+}
+
+* camp_rest {
+
+    #PREP
+    @bg "night_camp.png"
+    $fatigue -= 2
+    if ($fatigue < 0) {
+        $fatigue = 0
+    }
+
+    #STORY
+    "Under a thermal tarp, you sleep until the wind softens."
+    ILYA(focused, Left): "Clear head, steady hands. One more try."
+    @jump assemble_beacon
+}
+
+* forced_calibration {
+
+    #PREP
+    $fatigue += 1
+
+    #STORY
+    "You tighten the array with shaking hands and rerun the sequence."
+
+    if ($fatigue >= 6) {
+        ORB(neutral, Right): "Critical drift. Beacon core burned out."
+        ILYA(tired, Left): "I pushed too hard."
+        @end
+    } else {
+        ORB(bright, Right): "Signal corrected by narrow margin. Rescue ping acknowledged."
+        ILYA(relieved, Left): "It held. That is enough."
+        @end
+    }
+}

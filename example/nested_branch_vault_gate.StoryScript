@@ -1,0 +1,143 @@
+// ============================================================================
+// NESTED BRANCH FEATURE EXAMPLE: THE VAULT GATE
+// Focus: nested if/else conditions in #STORY.
+// ============================================================================
+
+* INIT {
+    $has_badge = false
+    $voice_match = false
+    $bribe_tokens = 0
+
+    @actor NYA "Nya" {
+        steady -> "nya_steady.png"
+        sly -> "nya_sly.png"
+        alarmed -> "nya_alarmed.png"
+    }
+
+    @actor GATE "Vault Sentinel" {
+        neutral -> "sentinel_neutral.png"
+        alert -> "sentinel_alert.png"
+    }
+
+    @start alley_plan
+}
+
+* alley_plan {
+
+    #PREP
+    @bg "neon_alley.png"
+    @bgm "heist_pulse.ogg"
+
+    #STORY
+    "Midnight rain paints the alley in neon while Nya studies the vault tower."
+    NYA(steady, Left): "One clean plan. No heroics."
+
+    @choice {
+        "Borrow a staff badge from a sleeping clerk" -> get_badge
+        "Practice the passphrase voice pattern" -> train_voice
+        "Buy silence with token chips" -> buy_tokens
+    }
+}
+
+* get_badge {
+
+    #PREP
+    $has_badge = true
+    $voice_match = false
+    $bribe_tokens = 1
+
+    #STORY
+    "A borrowed badge hangs from Nya's coat, still warm from another life."
+    NYA(sly, Left): "Not elegant, but it opens doors."
+    @jump vault_gate
+}
+
+* train_voice {
+
+    #PREP
+    $has_badge = false
+    $voice_match = true
+    $bribe_tokens = 0
+
+    #STORY
+    "Nya repeats the passphrase until even the alley echo believes it."
+    NYA(steady, Left): "If the scanner listens, I walk in."
+    @jump vault_gate
+}
+
+* buy_tokens {
+
+    #PREP
+    $has_badge = false
+    $voice_match = false
+    $bribe_tokens = 3
+
+    #STORY
+    "Three token chips slide across a tea-stall counter, no questions asked."
+    NYA(sly, Left): "Money does what passwords cannot."
+    @jump vault_gate
+}
+
+* vault_gate {
+
+    #PREP
+    @bg "vault_gate.png"
+    @sfx "scanner_ping.wav"
+
+    #STORY
+    GATE(alert, Right): "Identity check. Present credentials and voice sample."
+
+    if ($has_badge == true) {
+        NYA(steady, Left): "Badge transmitted."
+
+        if ($voice_match == true) {
+            GATE(neutral, Right): "Credentials confirmed. Welcome inside."
+            @jump silent_entry
+        } else {
+            GATE(alert, Right): "Badge valid. Voice mismatch detected. Secondary review required."
+            @jump manual_review
+        }
+    } else {
+        NYA(alarmed, Left): "No badge. We do this another way."
+
+        if ($bribe_tokens >= 2) {
+            GATE(neutral, Right): "Token transfer complete. Logging maintenance override."
+            @jump paid_entry
+        } else {
+            GATE(alert, Right): "No credentials, no override, no entry. Alarm protocol engaged."
+            @jump alarm_triggered
+        }
+    }
+}
+
+* silent_entry {
+
+    #STORY
+    "The vault corridor opens in perfect silence."
+    NYA(sly, Left): "Door one solved. Now for the memory core."
+    @end
+}
+
+* manual_review {
+
+    #STORY
+    "A red light follows Nya down a narrow inspection lane."
+    NYA(alarmed, Left): "Still inside, but every camera now knows my face."
+    @end
+}
+
+* paid_entry {
+
+    #STORY
+    "The sentinel looks away for exactly seven seconds."
+    NYA(sly, Left): "Expensive entrance. Worth it if I leave with the ledger."
+    @end
+}
+
+* alarm_triggered {
+
+    #STORY
+    "Sirens split the night and steel shutters slam down around the tower."
+    NYA(alarmed, Left): "Run now. Regret later."
+    @end
+}
