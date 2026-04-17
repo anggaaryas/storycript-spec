@@ -1,0 +1,792 @@
+// ============================================================================
+// THE LAST SIGNAL — A StoryScript Demo
+// A sci-fi short story about a deep-space relay station crew
+// receiving an anomalous signal from beyond known space.
+// ============================================================================
+
+* INIT {
+    // --- Global State ---
+    $morale = 60
+    $hull_integrity = 100
+    $signal_decoded = false
+    $power_reserves = 80
+    $trusted_kai = false
+    $alien_contact = false
+    $distress_sent = false
+    $reactor_stable = true
+    $crew_count = 3
+    $explored_signal = false
+    $has_weapon = false
+
+    // --- Actor Registration ---
+    @actor CMDR "Commander Voss" {
+        neutral -> "voss_neutral.png"
+        stern -> "voss_stern.png"
+        worried -> "voss_worried.png"
+        relieved -> "voss_relieved.png"
+        determined -> "voss_determined.png"
+    }
+
+    @actor KAI "Kai" {
+        default -> "kai_default.png"
+        excited -> "kai_excited.png"
+        nervous -> "kai_nervous.png"
+        focused -> "kai_focused.png"
+        hurt -> "kai_hurt.png"
+    }
+
+    @actor LUMEN "Lumen" {
+        calm -> "lumen_calm.png"
+        alert -> "lumen_alert.png"
+        glitch -> "lumen_glitch.png"
+        offline -> "lumen_offline.png"
+    }
+
+    @actor UNKNOWN "???"
+
+    @actor NARRATOR "Narrator"
+
+    // --- Entry Point ---
+    @start opening
+}
+
+// ============================================================================
+// ACT 1: THE SIGNAL
+// ============================================================================
+
+* opening {
+
+    #PREP
+    @bg "deep_space_relay.png"
+    @bgm "ambient_hum.ogg"
+    @sfx "console_beep.wav"
+
+    #STORY
+    "Relay Station Theta-9 drifts at the edge of charted space."
+    "Three souls crew this outpost: a commander past her prime, a young technician with too much curiosity, and an AI that never sleeps."
+    "For eleven months, nothing has happened."
+    "Until now."
+
+    LUMEN(alert, Right): "Commander. I am detecting an anomalous carrier wave on long-range sensors."
+    CMDR(neutral, Left): "Source?"
+    LUMEN(alert, Right): "Unknown. The signal originates approximately 4.7 light-years beyond the boundary of mapped space."
+    CMDR(stern, Left): "That's impossible. There's nothing out there."
+    LUMEN(calm, Right): "And yet, the signal persists."
+
+    @jump signal_analysis
+}
+
+* signal_analysis {
+
+    #PREP
+    @bg "comms_lab.png"
+    @bgm "tense_loop.ogg"
+    @sfx "door_hiss.wav"
+
+    #STORY
+    "The comms lab is dim, bathed in the blue glow of holographic waveforms."
+    "Kai is already hunched over the decryption console when Commander Voss enters."
+
+    KAI(excited, Right): "Commander! You have to see this. The waveform — it's not random noise. There's a repeating structure."
+    CMDR(neutral, Left): "Could it be an echo? Old colonial beacon?"
+    KAI(focused, Right): "No way. I cross-referenced every known beacon signature in the Union database. Zero matches."
+    KAI(excited, Right): "This is new, Commander. This is something we've never seen."
+
+    LUMEN(calm, Center): "I have completed a preliminary spectral analysis. The signal contains embedded data packets. Decryption would require diverting approximately 30% of our power reserves."
+
+    CMDR(worried, Left): "Thirty percent... That's not trivial out here."
+
+    @choice {
+        "Authorize full decryption" -> decrypt_signal
+        "Run passive analysis only" -> passive_scan
+        "Ignore the signal entirely" -> ignore_signal
+    }
+}
+
+* decrypt_signal {
+
+    #PREP
+    $power_reserves = $power_reserves - 30
+    $explored_signal = true
+    $signal_decoded = true
+    @bg "comms_lab.png"
+    @bgm "decryption_progress.ogg"
+    @sfx "decrypt_complete.wav"
+
+    #STORY
+    "Commander Voss nods slowly."
+
+    CMDR(determined, Left): "Do it. Divert the power. If something out there is talking, I want to know what it's saying."
+    KAI(excited, Right): "Yes! Initiating deep-spectrum decryption now."
+
+    "The station lights flicker as power reroutes to the comms array."
+    "Hours pass. Kai barely blinks."
+
+    KAI(nervous, Right): "Commander... it decoded."
+    CMDR(neutral, Left): "What does it say?"
+    KAI(nervous, Right): "It's... coordinates. And a single word, repeated over and over."
+
+    LUMEN(glitch, Center): "The translated word is: REMEMBER."
+
+    "Silence fills the lab."
+
+    CMDR(worried, Left): "Remember what?"
+
+    LUMEN(glitch, Center): "Unknown. However, the coordinates point to a location 0.3 AU from our current position. Within shuttle range."
+
+    @choice {
+        "Investigate the coordinates" -> prep_shuttle
+        "Send findings to Union Command" -> send_report
+    }
+}
+
+* passive_scan {
+
+    #PREP
+    $power_reserves = $power_reserves - 5
+    @bg "comms_lab.png"
+
+    #STORY
+    "Commander Voss crosses her arms."
+
+    CMDR(stern, Left): "Passive scan only. I'm not burning a third of our reserves on a ghost."
+    KAI(nervous, Right): "But Commander — "
+    CMDR(stern, Left): "That's an order, Kai."
+
+    "Kai deflates but complies, running the signal through surface-level filters."
+
+    LUMEN(calm, Right): "Passive analysis complete. The signal contains structured data, but without active decryption, content remains opaque. I can confirm it is not natural in origin."
+
+    CMDR(worried, Left): "Not natural..."
+    KAI(focused, Right): "It's artificial. Someone — or something — sent this."
+
+    @choice {
+        "Authorize full decryption after all" -> decrypt_signal
+        "Send a report to Union Command" -> send_report
+    }
+}
+
+* ignore_signal {
+
+    #PREP
+    @bg "deep_space_relay.png"
+    @bgm "ambient_hum.ogg"
+
+    #STORY
+    CMDR(stern, Left): "Log it and file it. We're not chasing phantoms."
+    KAI(nervous, Right): "Commander, with all due respect — "
+    CMDR(stern, Left): "We have protocols, Kai. Unknown signals get logged, not investigated by a skeleton crew on a relay station."
+
+    "Kai opens his mouth to argue, then thinks better of it."
+
+    KAI(default, Right): "Understood, Commander."
+
+    "The signal continues to pulse in the background, patient and unceasing."
+
+    LUMEN(calm, Center): "Acknowledged. Signal logged under designation UNK-7741. Resuming standard monitoring."
+
+    "Twelve hours later, the signal stops."
+    "And then the lights go out."
+
+    @jump power_failure
+}
+
+* power_failure {
+
+    #PREP
+    $power_reserves = $power_reserves - 40
+    $reactor_stable = false
+    @bg "dark_corridor.png"
+    @bgm "emergency_alarm.ogg"
+    @sfx "alarm_blare.wav"
+
+    #STORY
+    "Emergency lighting casts blood-red shadows across the corridor."
+
+    LUMEN(alert, Center): "ALERT. Primary reactor output has dropped to 40%. Cause: unknown external interference."
+    CMDR(worried, Left): "External? We're in the middle of nowhere."
+    LUMEN(alert, Center): "Correction. We are 0.3 AU from the signal's origin coordinates."
+
+    "A chill runs through the station that has nothing to do with the failing life support."
+
+    KAI(nervous, Right): "It's the signal, Commander. Whatever sent it knows we're here."
+
+    if ($explored_signal == true) {
+        CMDR(determined, Left): "Then we already know where to look."
+        @jump prep_shuttle
+    } else {
+        CMDR(determined, Left): "Kai, get that signal decrypted. Now. Use whatever power we have left."
+        @jump emergency_decrypt
+    }
+}
+
+* emergency_decrypt {
+
+    #PREP
+    $power_reserves = $power_reserves - 20
+    $signal_decoded = true
+    @bg "comms_lab_dark.png"
+    @sfx "frantic_typing.wav"
+
+    #STORY
+    "Kai works by the dim glow of a portable lamp, fingers flying across the console."
+
+    KAI(focused, Right): "Decryption at 40%... 60%... come on, come on..."
+    LUMEN(glitch, Center): "Warning. Power reserves critically low. Life support will fail in approximately six hours."
+
+    KAI(nervous, Right): "Got it! Coordinates — nearby. And a word. Just one word."
+    CMDR(worried, Left): "What word?"
+    KAI(nervous, Right): "REMEMBER."
+
+    "The station shudders. Something is pulling at the hull."
+
+    CMDR(determined, Left): "We don't have a choice anymore. We go to those coordinates."
+
+    @jump prep_shuttle
+}
+
+* send_report {
+
+    #PREP
+    $distress_sent = true
+    @bg "comms_lab.png"
+    @sfx "transmission_static.wav"
+
+    #STORY
+    CMDR(neutral, Left): "Lumen, open a priority channel to Union Command."
+    LUMEN(calm, Right): "Channel open. Transmission delay to nearest relay: approximately fourteen hours."
+
+    CMDR(stern, Left): "Commander Voss, Relay Station Theta-9. We've intercepted an artificial signal of unknown origin. Coordinates and spectral data attached. Requesting guidance."
+
+    "The message fires into the void."
+
+    KAI(default, Right): "Fourteen hours is a long time to wait, Commander."
+    CMDR(neutral, Left): "We've waited eleven months. We can wait fourteen more hours."
+
+    "But the station has other plans."
+
+    LUMEN(alert, Center): "Commander. Detecting power fluctuations in the reactor. The signal appears to be interfering with our systems."
+
+    @jump power_failure
+}
+
+// ============================================================================
+// ACT 2: THE JOURNEY
+// ============================================================================
+
+* prep_shuttle {
+
+    #PREP
+    @bg "shuttle_bay.png"
+    @bgm "preparation_theme.ogg"
+
+    #STORY
+    "The shuttle bay is cramped — designed for maintenance pods, not expeditions."
+    "Shuttle Seven sits in its cradle, scarred from years of micro-asteroid impacts."
+
+    CMDR(neutral, Left): "Kai, prep the shuttle. Lumen, run diagnostics."
+    KAI(excited, Right): "Already on it!"
+
+    LUMEN(calm, Center): "Shuttle Seven is functional. Fuel reserves sufficient for a 0.3 AU round trip with minimal margin."
+
+    CMDR(worried, Left): "Minimal margin. Of course."
+
+    "Commander Voss pauses at the weapons locker."
+
+    @choice {
+        "Take the sidearm" -> take_weapon
+        "Leave it — this is first contact" -> leave_weapon
+    }
+}
+
+* take_weapon {
+
+    #PREP
+    $has_weapon = true
+    @sfx "holster_click.wav"
+
+    #STORY
+    "Voss slides the pulse pistol into her hip holster."
+
+    CMDR(stern, Left): "Hope for the best, prepare for the worst."
+    KAI(nervous, Right): "You think we'll need that?"
+    CMDR(stern, Left): "I think I'd rather have it and not need it."
+
+    @jump shuttle_launch
+}
+
+* leave_weapon {
+
+    #STORY
+    "Voss's hand hovers over the pistol, then pulls back."
+
+    CMDR(neutral, Left): "If whatever sent that signal wanted us dead, we'd already be dead."
+    KAI(default, Right): "That's... oddly comforting?"
+    CMDR(neutral, Left): "You're welcome."
+
+    @jump shuttle_launch
+}
+
+* shuttle_launch {
+
+    #PREP
+    @bg "shuttle_cockpit.png"
+    @bgm "launch_sequence.ogg"
+    @sfx "engine_ignition.wav"
+
+    #STORY
+    "The shuttle detaches from the station with a metallic groan."
+    "Stars wheel past the viewport as Kai adjusts their heading."
+
+    KAI(focused, Right): "Course locked. ETA: forty-seven minutes."
+    CMDR(neutral, Left): "Lumen, maintain station systems. If we're not back in six hours, broadcast our findings on all channels."
+    LUMEN(calm, Center): "Understood, Commander. Be careful."
+
+    "The relay station shrinks behind them, a fading speck of light."
+    "Ahead, there is only darkness."
+
+    if ($morale < 40) {
+        "Kai stares out the viewport, unusually quiet."
+        KAI(nervous, Right): "Commander... do you think we're making a mistake?"
+        CMDR(determined, Left): "Probably. But it's our mistake to make."
+        @jump arrival
+    } else {
+        KAI(excited, Right): "You know, I joined the relay service hoping something like this would happen."
+        CMDR(neutral, Left): "Be careful what you wish for."
+        KAI(default, Right): "Too late for that!"
+        @jump arrival
+    }
+}
+
+* arrival {
+
+    #PREP
+    @bg "void_structure.png"
+    @bgm STOP
+    @sfx "proximity_alarm.wav"
+
+    #STORY
+    "The proximity alarm screams."
+    "Through the viewport, something materializes from the dark — a structure, enormous and impossible."
+    "It is not a ship. It is not a station."
+    "It looks like a cathedral made of starlight and carbon."
+
+    KAI(nervous, Right): "What... is that?"
+    CMDR(worried, Left): "I have no idea."
+
+    LUMEN(glitch, Center): "Remote scan inconclusive. The structure does not match any known engineering paradigm. Age estimate: minimum 400,000 years."
+
+    KAI(excited, Right): "Four hundred thousand — that predates human spaceflight by hundreds of millennia!"
+    CMDR(worried, Left): "And the signal led us right to it."
+
+    "A docking port on the structure pulses with a soft blue light, as if expecting them."
+
+    @choice {
+        "Dock with the structure" -> dock_structure
+        "Hold position and scan further" -> scan_structure
+    }
+}
+
+* scan_structure {
+
+    #PREP
+    $trusted_kai = true
+    @bg "void_structure.png"
+    @sfx "scanner_sweep.wav"
+
+    #STORY
+    "Kai runs every sensor they have."
+
+    KAI(focused, Right): "Composition: unknown carbon lattice. Internal atmosphere: breathable. Temperature: 18 degrees Celsius."
+    CMDR(stern, Left): "Breathable atmosphere in a 400,000-year-old structure?"
+    KAI(nervous, Right): "It's been maintained, Commander. Something is keeping this place alive."
+
+    LUMEN(alert, Center): "I am detecting a low-frequency transmission from the docking port. It is cycling through mathematical primes. This is a universal greeting protocol."
+
+    CMDR(determined, Left): "It's inviting us in."
+
+    @choice {
+        "Accept the invitation" -> dock_structure
+        "This is too convenient — retreat" -> retreat_attempt
+    }
+}
+
+* retreat_attempt {
+
+    #PREP
+    $hull_integrity = $hull_integrity - 10
+    @bg "shuttle_cockpit.png"
+    @sfx "engine_strain.wav"
+
+    #STORY
+    CMDR(stern, Left): "Kai, get us out of here. Full burn back to the station."
+    KAI(focused, Right): "Engaging thrusters — "
+
+    "The shuttle lurches. The engines whine but the ship doesn't move."
+
+    KAI(nervous, Right): "We're caught in some kind of field! Engines at max but we're stationary!"
+
+    LUMEN(glitch, Center): "Gravitational anomaly detected. The structure is holding us in place."
+
+    "The docking port pulses faster, more insistently."
+
+    UNKNOWN: "There is no malice in the hold. Only patience."
+
+    "The voice comes from everywhere and nowhere — through the hull, through the speakers, through their bones."
+
+    KAI(nervous, Right): "Did everyone hear that?!"
+    CMDR(worried, Left): "...Yes."
+
+    @choice {
+        "Dock with the structure" -> dock_structure
+        "Shut down all systems and wait" -> wait_it_out
+    }
+}
+
+* wait_it_out {
+
+    #PREP
+    $power_reserves = $power_reserves - 15
+    @bg "shuttle_cockpit_dark.png"
+    @bgm "deep_silence.ogg"
+
+    #STORY
+    "They sit in darkness, breathing recycled air."
+    "Minutes pass. Then an hour."
+
+    CMDR(worried, Left): "Our power is draining. Whatever this field is, it's siphoning our reserves."
+    KAI(nervous, Right): "Commander, at this rate we have maybe two hours before life support fails."
+
+    "The voice returns, softer now."
+
+    UNKNOWN: "I have waited so long. Please."
+
+    "There is something in the voice that sounds less alien than it should."
+    "Something that sounds like grief."
+
+    CMDR(determined, Left): "...Open the docking port, Kai."
+
+    @jump dock_structure
+}
+
+// ============================================================================
+// ACT 3: THE TRUTH
+// ============================================================================
+
+* dock_structure {
+
+    #PREP
+    $alien_contact = true
+    @bg "alien_corridor.png"
+    @bgm "otherworldly_ambience.ogg"
+    @sfx "airlock_seal.wav"
+
+    #STORY
+    "The airlock seals with a soft hiss."
+    "The corridor beyond is made of the same dark carbon lattice, but veins of soft blue light pulse along the walls like a circulatory system."
+    "The air smells faintly of rain."
+
+    KAI(nervous, Right): "Atmosphere checks out. It's actually... pleasant?"
+    CMDR(neutral, Left): "Stay sharp."
+
+    "They walk deeper into the structure."
+    "The corridor curves gently, and the blue light grows brighter."
+
+    "Then they see it."
+    "A chamber, vast and domed, filled with thousands of crystalline pillars."
+    "Each pillar contains a softly glowing shape — organic, preserved."
+
+    KAI(excited, Right): "Are those... organisms? Specimens?"
+    CMDR(worried, Left): "Or people."
+
+    UNKNOWN: "Memories."
+
+    "The voice resonates from the central pillar, which is larger than the rest."
+    "Within it, something shifts."
+
+    @jump meet_the_keeper
+}
+
+* meet_the_keeper {
+
+    #PREP
+    @bg "crystal_chamber.png"
+    @bgm "keeper_theme.ogg"
+
+    #STORY
+    "The central pillar cracks open with a sound like breaking ice."
+    "A figure emerges — tall, translucent, humanoid but not human."
+    "Its body is made of the same carbon lattice as the structure itself."
+    "Where eyes should be, two points of steady blue light regard them."
+
+    UNKNOWN: "I am the Keeper. I am the last of the Architects."
+
+    CMDR(determined, Left): "You sent the signal."
+
+    UNKNOWN: "Yes. I have been transmitting for 127,000 years. You are the first to answer."
+
+    KAI(nervous, Right): "127,000 years?!"
+
+    UNKNOWN: "My civilization built this archive to preserve the memory of every species we encountered. Billions of lives, recorded in crystal."
+
+    "The Keeper gestures, and the pillars illuminate — each one a window into an alien world, an alien life."
+
+    UNKNOWN: "But the archive is failing. My power source decays. In perhaps thirty of your years, the crystals will go dark. And everything we saved will be lost."
+
+    UNKNOWN: "I sent the signal because I need someone to remember."
+
+    if ($has_weapon == true) {
+        "Commander Voss is acutely aware of the weight of the pistol on her hip."
+        "It feels absurd now."
+    }
+
+    @choice {
+        "Offer to help preserve the archive" -> help_keeper
+        "Ask what the Keeper wants from humanity" -> question_keeper
+    }
+}
+
+* question_keeper {
+
+    #PREP
+    $trusted_kai = true
+    @bg "crystal_chamber.png"
+
+    #STORY
+    CMDR(stern, Left): "What exactly do you want from us?"
+
+    UNKNOWN: "I want nothing you would not freely give. I ask only that the archive be moved to a place where it can survive. Your relay station has sufficient power infrastructure."
+
+    KAI(focused, Right): "The station's reactor could sustain the crystals for centuries if properly calibrated."
+
+    CMDR(worried, Left): "You want us to turn our station into a museum?"
+
+    UNKNOWN: "I want you to turn your station into a promise. A promise that what lived will not be forgotten."
+
+    "The Keeper reaches out, and a single crystal detaches from a pillar, floating to Kai's hands."
+    "Inside it, a creature that looks like a luminous jellyfish swims in an endless loop."
+
+    KAI(excited, Right): "It's beautiful..."
+
+    UNKNOWN: "That species existed for nine million years. They composed music with bioluminescence. They are gone now. All of them. Except here."
+
+    @choice {
+        "Agree to help" -> help_keeper
+        "This is too much — decline" -> decline_keeper
+    }
+}
+
+* decline_keeper {
+
+    #PREP
+    $morale = $morale - 30
+    @bg "crystal_chamber.png"
+    @bgm "melancholy_strings.ogg"
+
+    #STORY
+    CMDR(stern, Left): "I'm sorry. This is beyond our authority. I can report your existence to Union Command, but I can't make this decision for all of humanity."
+
+    UNKNOWN: "I understand. Your caution is... familiar. Many species required time."
+
+    "The Keeper's light dims slightly."
+
+    UNKNOWN: "But time is the one thing I no longer have."
+
+    KAI(hurt, Right): "Commander... we can't just leave."
+    CMDR(worried, Left): "Kai..."
+    KAI(hurt, Right): "127,000 years. Alone. Waiting for someone — anyone — to care."
+
+    "Kai turns to the Keeper."
+
+    KAI(focused, Right): "I'll stay."
+    CMDR(worried, Left): "Kai!"
+    KAI(focused, Right): "You go back. Send the report. But someone should be here. Someone should bear witness."
+
+    @choice {
+        "Allow Kai to stay" -> kai_stays
+        "Override Kai — everyone goes home" -> everyone_leaves
+    }
+}
+
+* kai_stays {
+
+    #PREP
+    $trusted_kai = true
+    $crew_count = $crew_count - 1
+    @bg "crystal_chamber.png"
+    @bgm "bittersweet_farewell.ogg"
+    @sfx "crystal_hum.wav"
+
+    #STORY
+    "Commander Voss looks at Kai for a long moment."
+
+    CMDR(relieved, Left): "You're braver than I gave you credit for."
+    KAI(default, Right): "Or dumber. Jury's still out."
+
+    "They share a tired laugh."
+
+    UNKNOWN: "The young one will be safe. The archive will sustain them."
+
+    CMDR(determined, Left): "I'll be back with a proper team. You have my word."
+
+    KAI(default, Right): "I'll hold you to that, Commander."
+
+    "Voss walks back through the carbon corridors alone."
+    "Behind her, the crystals pulse with the light of a billion remembered lives."
+
+    @jump epilogue_hope
+}
+
+* everyone_leaves {
+
+    #PREP
+    $morale = $morale - 20
+    @bg "shuttle_cockpit.png"
+    @bgm "solemn_departure.ogg"
+
+    #STORY
+    CMDR(stern, Left): "No one stays. That's final."
+
+    "Kai says nothing, but their silence speaks volumes."
+
+    "The shuttle detaches from the structure."
+    "As they pull away, the blue light of the archive grows fainter."
+
+    UNKNOWN: "I will keep transmitting. Perhaps the next ones who hear will choose differently."
+
+    "The voice fades."
+    "The structure vanishes into the dark."
+
+    KAI(hurt, Right): "We could have done something."
+    CMDR(worried, Left): "We will. Just... not today."
+
+    "But Commander Voss isn't sure she believes that."
+
+    @jump epilogue_regret
+}
+
+* help_keeper {
+
+    #PREP
+    $morale = $morale + 20
+    $trusted_kai = true
+    @bg "crystal_chamber.png"
+    @bgm "heroic_resolve.ogg"
+    @sfx "crystal_resonance.wav"
+
+    #STORY
+    CMDR(determined, Left): "We'll do it. We'll find a way to preserve the archive."
+
+    "The Keeper's light brightens."
+
+    UNKNOWN: "You would carry this burden?"
+    CMDR(determined, Left): "It's not a burden. It's a privilege."
+
+    KAI(excited, Right): "I can start designing the power coupling right now! If we bridge the crystal matrix to the station's reactor — "
+
+    LUMEN(calm, Center): "I have been running calculations. The integration is feasible. I estimate a 94.7% success rate with current resources."
+
+    UNKNOWN: "Then let us begin."
+
+    "The Keeper raises its arms, and the entire chamber sings — a sound that resonates in frequencies both audible and felt."
+    "The crystals glow brighter, and for a moment, Voss sees them all."
+    "A billion lives. A billion stories. All waiting to be remembered."
+
+    CMDR(relieved, Left): "We hear you. All of you."
+
+    @jump epilogue_unity
+}
+
+// ============================================================================
+// EPILOGUES
+// ============================================================================
+
+* epilogue_hope {
+
+    #PREP
+    @bg "relay_station_dawn.png"
+    @bgm "hopeful_theme.ogg"
+
+    #STORY
+    "Relay Station Theta-9. Six weeks later."
+
+    "Commander Voss stands in the comms lab, watching the Union fleet arrive on long-range sensors."
+    "Twelve ships. Scientists, engineers, diplomats."
+
+    LUMEN(calm, Right): "Union Command has designated the archive a Class One Heritage Site. The largest archaeological find in human history."
+
+    CMDR(relieved, Left): "And Kai?"
+
+    LUMEN(calm, Right): "Kai reports the Keeper is in stable condition. They have been cataloguing species together. Kai insists I tell you they have learned to play an instrument made of light."
+
+    "Voss smiles — the first real smile in months."
+
+    CMDR(relieved, Left): "Tell them I'm bringing a proper crew. And coffee. Lots of coffee."
+
+    "Outside the viewport, the stars shine steady and patient."
+    "Among them, an ancient archive hums with the memory of worlds."
+    "And for the first time in 127,000 years, it is not alone."
+
+    @end
+}
+
+* epilogue_regret {
+
+    #PREP
+    @bg "relay_station_night.png"
+    @bgm "regret_piano.ogg"
+
+    #STORY
+    "Relay Station Theta-9. Three months later."
+
+    "The Union sent a research vessel. It found the coordinates."
+    "The structure was dark. The crystals, cold."
+    "The Keeper was gone."
+
+    LUMEN(calm, Right): "Union Science Division estimates the archive lost power approximately six weeks after our departure."
+
+    "Voss reads the report in the dim light of her quarters."
+
+    CMDR(worried, Left): "All of it? Gone?"
+    LUMEN(calm, Right): "The crystals are intact but inert. Without the Keeper's power source, the data is inaccessible. Recovery is considered... unlikely."
+
+    "Voss sets down the report and stares at the ceiling."
+    "She thinks about a voice that waited 127,000 years."
+    "And the fourteen hours she couldn't spare."
+
+    NARRATOR: "Some signals are only sent once."
+
+    @end
+}
+
+* epilogue_unity {
+
+    #PREP
+    @bg "archive_restored.png"
+    @bgm "grand_finale.ogg"
+    @sfx "crystal_symphony.wav"
+
+    #STORY
+    "Relay Station Theta-9. One year later."
+
+    "The station is unrecognizable. The archive has been integrated into its core, crystal pillars rising through every deck like luminous trees."
+    "Scientists from thirty Union worlds study the preserved species."
+    "Children visit on field trips and press their faces to the crystals."
+
+    KAI(excited, Right): "Commander! The Andari delegation wants to see the music-jellyfish again."
+    CMDR(relieved, Left): "Tell them to get in line."
+
+    "The Keeper stands at the center of its chamber, stronger now, its light steady and warm."
+
+    UNKNOWN: "I have a new signal to send."
+    CMDR(neutral, Left): "What does it say?"
+    UNKNOWN: "It says: we are here. We remember. And we are listening."
+
+    "The signal fires outward from Theta-9, riding the same frequencies that first brought Voss and Kai to the archive."
+    "It reaches into the dark places between stars."
+    "And somewhere, in the vast impossible distance, something answers."
+
+    NARRATOR: "The last signal was never an ending. It was an invitation."
+
+    @end
+}
