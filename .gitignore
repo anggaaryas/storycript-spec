@@ -1,10 +1,29 @@
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
 
 # Rust/Cargo
 /target/
 **/target/
 Cargo.lock
+
+# Node / npm / package managers
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# VS Code extension build
+*.vsix
+out/
+dist/
 
 # Build artifacts
 *.rlib
