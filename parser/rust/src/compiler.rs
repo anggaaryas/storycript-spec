@@ -13,6 +13,44 @@ pub struct CompileOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub fn compile_source(source: &str) -> CompileOutput {
+    let (parsed_root, mut diagnostics) = parse_root_script(source);
+    let root_script = match parsed_root {
+        Some(script) => script,
+        None => {
+            diagnostics.sort();
+            return CompileOutput {
+                script: None,
+                diagnostics,
+            };
+        }
+    };
+
+    // Raw-source compilation has no filesystem context, so includes cannot be resolved here.
+    for include in &root_script.init.includes {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::EIncludeFileNotFound,
+            format!(
+                "Included file '{}' could not be read when compiling from raw source",
+                include.path
+            ),
+            Phase::Validation,
+            "INIT",
+            include.line,
+            include.column,
+        ));
+    }
+
+    diagnostics.extend(validator::validate_requirements(&root_script.init, &[]));
+    diagnostics.extend(validator::validate(&root_script));
+    diagnostics.sort();
+
+    CompileOutput {
+        script: Some(root_script),
+        diagnostics,
+    }
+}
+
 pub fn compile_file(path: &Path) -> Result<CompileOutput, String> {
     let source = fs::read_to_string(path)
         .map_err(|e| format!("Error reading '{}': {}", path.display(), e))?;

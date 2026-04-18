@@ -39,18 +39,24 @@ flutter:
   # adding or updating assets for this project.
   #
   # Please refer to README.md for a detailed explanation.
-  plugin:
-    platforms:
-      android:
-        ffiPlugin: true
-      ios:
-        ffiPlugin: true
-      linux:
-        ffiPlugin: true
-      macos:
-        ffiPlugin: true
-      windows:
-        ffiPlugin: true
+  # plugin:
+  #   platforms:
+  #     android:
+  #       ffiPlugin: true
+  #     ios:
+  #       ffiPlugin: true
+  #     linux:
+  #       ffiPlugin: true
+  #     macos:
+  #       ffiPlugin: true
+  #     windows:
+  #       ffiPlugin: true
+  #     web:
+  #       ffiPlugin: true
+
+  # assets:
+  #   - web/pkg/storyscript_player_core.js
+  #   - web/pkg/storyscript_player_core_bg.wasm
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

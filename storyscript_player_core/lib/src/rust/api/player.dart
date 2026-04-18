@@ -12,6 +12,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 BigInt playerOpen({required String path}) =>
     RustLib.instance.api.crateApiPlayerPlayerOpen(path: path);
 
+BigInt playerOpenRaw({required String source}) =>
+    RustLib.instance.api.crateApiPlayerPlayerOpenRaw(source: source);
+
 bool playerClose({required BigInt sessionId}) =>
     RustLib.instance.api.crateApiPlayerPlayerClose(sessionId: sessionId);
 

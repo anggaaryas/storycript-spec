@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -772820343;
+  int get rustContentHash => -984045137;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -95,6 +95,8 @@ abstract class RustLibApi extends BaseApi {
   BridgeState crateApiPlayerPlayerGetState({required BigInt sessionId});
 
   BigInt crateApiPlayerPlayerOpen({required String path});
+
+  BigInt crateApiPlayerPlayerOpenRaw({required String source});
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -278,6 +280,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiPlayerPlayerOpenConstMeta =>
       const TaskConstMeta(debugName: "player_open", argNames: ["path"]);
+
+  @override
+  BigInt crateApiPlayerPlayerOpenRaw({required String source}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(source, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerOpenRawConstMeta,
+        argValues: [source],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerOpenRawConstMeta =>
+      const TaskConstMeta(debugName: "player_open_raw", argNames: ["source"]);
 
   @protected
   String dco_decode_String(dynamic raw) {

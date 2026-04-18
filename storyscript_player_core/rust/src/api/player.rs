@@ -62,6 +62,19 @@ pub fn player_open(path: String) -> Result<u64, String> {
 }
 
 #[flutter_rust_bridge::frb(sync)]
+pub fn player_open_raw(source: String) -> Result<u64, String> {
+    let player = StoryPlayer::from_source("inline", &source)?;
+    let id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
+
+    let mut guard = sessions()
+        .lock()
+        .map_err(|_| "Session store lock poisoned".to_string())?;
+    guard.insert(id, player);
+
+    Ok(id)
+}
+
+#[flutter_rust_bridge::frb(sync)]
 pub fn player_close(session_id: u64) -> bool {
     if let Ok(mut guard) = sessions().lock() {
         return guard.remove(&session_id).is_some();

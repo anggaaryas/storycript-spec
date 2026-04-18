@@ -23,6 +23,28 @@ impl StoryPlayer {
         player
     }
 
+    pub fn from_source(script_name: impl Into<String>, source: &str) -> Result<Self, String> {
+        let script_name = script_name.into();
+        let compile = storycript_parser::compiler::compile_source(source);
+
+        if compile.diagnostics.iter().any(|d| d.is_error()) {
+            return Err(format_diagnostics(
+                &format!("Compile errors in {}", script_name),
+                &compile
+                    .diagnostics
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+            ));
+        }
+
+        let script = compile.script.ok_or_else(|| {
+            format!("Compile failed to produce script for {}", script_name)
+        })?;
+
+        Ok(Self::new(script_name, &script))
+    }
+
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let compile = storycript_parser::compiler::compile_file(path)
             .map_err(|e| format!("Failed to compile {}: {}", display_path(path), e))?;
