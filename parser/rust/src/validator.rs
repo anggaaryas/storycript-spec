@@ -1413,10 +1413,12 @@ mod tests {
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);
-        let script = parser.parse().unwrap();
+        let script = parser.parse();
         let mut all = lexer.diagnostics;
         all.extend(parser.diagnostics);
-        all.extend(validate(&script));
+        if let Some(script) = script {
+            all.extend(validate(&script));
+        }
         all
     }
 
@@ -1756,5 +1758,131 @@ mod tests {
             d.code == DiagnosticCode::EPhaseTokenForbidden
                 && d.message.contains("declaration is forbidden in #STORY")
         }));
+    }
+
+    #[test]
+    fn test_else_if_chain_valid_in_prep_and_story() {
+        let src = r#"
+* INIT {
+    $score as integer = 42
+    @actor A "Alice"
+    @start main
+}
+* path_low {
+    #STORY
+    @end
+}
+* path_mid {
+    #STORY
+    @end
+}
+* path_high {
+    #STORY
+    @end
+}
+* main {
+    #PREP
+    if ($score < 30) {
+        $score += 1
+    } else if ($score < 60) {
+        $score += 2
+    } else {
+        $score += 3
+    }
+
+    #STORY
+    if ($score < 30) {
+        @jump path_low
+    } else if ($score < 60) {
+        @jump path_mid
+    } else {
+        @jump path_high
+    }
+}
+"#;
+        let diags = parse_and_validate(src);
+        let errors: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_else_if_condition_must_be_boolean() {
+        let src = r#"
+* INIT {
+    $flag as boolean = true
+    @actor A "Alice"
+    @start main
+}
+* next {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    if ($flag == true) {
+        @jump next
+    } else if ("not-boolean") {
+        @jump next
+    } else {
+        @end
+    }
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EConditionTypeInvalid));
+    }
+
+    #[test]
+    fn test_else_if_story_fallthrough_rejected() {
+        let src = r#"
+* INIT {
+    $a as boolean = false
+    $b as boolean = false
+    @actor A "Alice"
+    @start main
+}
+* alt {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    if ($a == true) {
+        @jump alt
+    } else if ($b == true) {
+        @jump alt
+    }
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EStoryUnterminatedPath));
+    }
+
+    #[test]
+    fn test_else_if_malformed_syntax_reports_esyntax() {
+        let src = r#"
+* INIT {
+    $score as integer = 1
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    if ($score > 0) {
+        $score = 2
+    } else if $score < 10 {
+        $score = 3
+    }
+
+    #STORY
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::ESyntax));
     }
 }

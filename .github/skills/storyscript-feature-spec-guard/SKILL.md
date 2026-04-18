@@ -37,7 +37,7 @@ If any required input is missing, stop and ask for it before drafting changes.
 6. Run completion checks and publish the feature bundle.
 
 ## Step 1: Define Scope Contract (No Ambiguity)
-Write a scope block with all fields below. Do not continue until all fields are explicit.
+Plan a scope contract with all fields below. Do not continue until all fields are explicit. Save to your notes or a temporary document.
 
 ```markdown
 ### Feature Scope Contract

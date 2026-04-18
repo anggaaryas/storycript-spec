@@ -51,14 +51,14 @@ A standard scene is defined using `* <scene_label> { ... }`. Every scene operate
 ### Phase 1: `#PREP` (Execution Phase)
 The invisible backend phase. The parser executes all math, updates state arrays, and queues engine assets instantly before rendering anything to the screen. 
 
-* **Allowed Tokens:** `$`, `@bg`, `@bgm`, `@sfx`, `if`/`else`.
+* **Allowed Tokens:** `$`, `@bg`, `@bgm`, `@sfx`, `if`/`else if`/`else`.
 * **Variable Declaration:** Typed local declarations are allowed only in `#PREP` (`$name as <type> = <expr>`).
 * **Forbidden Tokens:** `"Narrative text"`, `ActorID()`, standalone STORY output (`$var`), `@choice`, `@jump`, `@end`.
 
 ### Phase 2: `#STORY` (Rendering & Interaction Phase)
 The player-facing phase. The UI sequentially renders text and dialogue. Execution pauses when requiring user input or a hard scene transition.
 
-* **Allowed Tokens:** `"Narrative text"`, `ActorID()`, `if`/`else`, `@choice`, `@jump`, `@end`, standalone variable output (`$var`), and **read-only** variable access (`$var`) inside expressions.
+* **Allowed Tokens:** `"Narrative text"`, `ActorID()`, `if`/`else if`/`else`, `@choice`, `@jump`, `@end`, standalone variable output (`$var`), and **read-only** variable access (`$var`) inside expressions.
 * **Forbidden Tokens:** `@bg`, `@bgm`, `@sfx`, and variable assignment/mutation (`=`, `+=`, `-=`, etc.).
 * **Strict Rule:** Every reachable execution path in `#STORY` must terminate with a transition directive (`@choice`, `@jump`, or `@end`) as its final executed token.
 * **Compiler Enforcement:** The compiler must statically verify this termination rule for `#STORY` control flow.
@@ -78,6 +78,26 @@ Each scene must follow these structural rules:
 
 ### Variables & Logic
 Standard C-style conditionals are supported in both `#PREP` and `#STORY` blocks. Variables must be prefixed with `$`.
+
+
+### Branching Syntax
+Use C-style branch chains in both `#PREP` and `#STORY`:
+
+```plaintext
+if (<condition_a>) {
+    ...
+} else if (<condition_b>) {
+    ...
+} else {
+    ...
+}
+```
+
+Execution semantics:
+* Branches are evaluated top-to-bottom.
+* Only the first branch with a `true` condition executes.
+* `else` executes only when all previous conditions are `false`.
+* Parentheses around each `if`/`else if` condition are mandatory.
 
 **Mutation Rule:**
 * In `#PREP`: variable reads and writes are allowed.
@@ -119,6 +139,8 @@ Standard C-style conditionals are supported in both `#PREP` and `#STORY` blocks.
 
 ```plaintext
 if ($system_stability <= 30) {
+    $critical_warning = true;
+} else if ($system_stability <= 50) {
     $critical_warning = true;
 } else {
     $critical_warning = false;
@@ -245,7 +267,8 @@ The compiler must fail the script when any of the following is true:
 * Any `rand()`/`rand(min,max)` call is used without typed assignment context.
 * Any `rand(min,max)` call has incompatible bound types for assignment target type.
 * Any `pick()` call has wrong arity, non-list argument, or empty list.
-* Any condition expression (`if`, `@choice if`) is not boolean.
+* Any condition expression (`if`, `else if`, `@choice if`) is not boolean.
+* Any `else if` branch that does not follow `else if (<expr>) { ... }` syntax.
 * Any interpolation placeholder is malformed (for example: `${`, `${}`, `${1bad}`, `${name`).
 * Any constant-folded `@choice` block is provably empty at compile time.
 * Any reachable `#STORY` path can complete without executing `@choice`, `@jump`, or `@end`.
@@ -305,6 +328,13 @@ Diagnostic code naming:
 | `LS004` | A local variable is read outside its declaring scene. | `E_VARIABLE_UNDECLARED_READ` | Out-of-scope reads are treated as undeclared in the current scene scope. |
 | `LS005` | A local variable is written outside its declaring scene. | `E_VARIABLE_UNDECLARED_WRITE` | Out-of-scope writes are treated as undeclared in the current scene scope. |
 
+#### Else-If Diagnostic Mapping
+| Rule ID | Validation Condition | Diagnostic Code | Rationale |
+| :--- | :--- | :--- | :--- |
+| `F001` | `else if` branch does not match `else if (<expr>) { ... }` token shape. | `E_SYNTAX` | Malformed branch chain is a parser-level syntax failure. |
+| `F002` | Any `else if` condition expression is non-boolean. | `E_CONDITION_TYPE_INVALID` | Branch conditions require explicit boolean typing. |
+| `F003` | A reachable `#STORY` path through an `if`/`else if` chain can fall through without `@choice`, `@jump`, or `@end`. | `E_STORY_UNTERMINATED_PATH` | Existing story termination invariant applies to every reachable branch arm. |
+
 #### Compile-Time Warnings
 | Code | Trigger |
 | :--- | :--- |
@@ -360,6 +390,7 @@ Formatting rules:
 The compiler must perform static control-flow analysis on each `#STORY` block.
 
 * If a condition cannot be proven constant at compile time, both branches are treated as reachable.
+* In `if`/`else if` chains, each non-constant arm is treated as reachable unless pruned by constant folding.
 * A path is considered terminated only when its final executable statement is `@choice`, `@jump`, or `@end`.
 * If any reachable path can fall through to the end of `#STORY` without a transition, compilation fails.
 * Branches proven unreachable by constant folding do not need to terminate.
@@ -399,7 +430,9 @@ Semicolons are optional.
     #PREP
     @bg "core_chamber.png"
     
-    if ($system_stability < 50) {
+    if ($system_stability < 30) {
+        @bgm "critical_alarm.wav"
+    } else if ($system_stability < 50) {
         @bgm "warning_siren.wav"
     } else {
         @bgm "steady_hum.wav"
@@ -410,7 +443,10 @@ Semicolons are optional.
 
     TEO(calm, Left): "Variance is up by twelve percent. Gippie, run a sector scan."
 
-    if ($system_stability < 50) {
+    if ($system_stability < 30) {
+        GIP(alert, Right): "Critical threshold crossed! Coolant pressure is collapsing!"
+        TEO(focus, Left): "Emergency route now. Seal sector four and evacuate corridor B."
+    } else if ($system_stability < 50) {
         GIP(alert, Right): "Yikes! Sector four is throwing a major temper tantrum, Teona!"
         TEO(focus, Left): "Understood. Let's patch the routing matrix before it cascades."
     } else {

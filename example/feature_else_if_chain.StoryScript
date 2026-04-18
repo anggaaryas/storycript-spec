@@ -1,0 +1,98 @@
+// ============================================================================
+// ELSE-IF FEATURE EXAMPLE: REACTOR TRIAGE
+// Coverage:
+// 1) Happy path: chained else-if in #PREP and #STORY
+// 2) Boundary condition: explicit == branch between thresholds
+// 3) Failure case notes: malformed syntax and invalid condition types
+// ============================================================================
+
+* INIT {
+    $stability as integer = 50
+    $manual_override as boolean = false
+
+    @actor TEO "Teona"
+    @actor SYS "System"
+
+    @start reactor_hub
+}
+
+* reactor_hub {
+
+    #PREP
+    @bg "reactor_hub.png"
+
+    if ($stability < 25) {
+        @bgm "critical_alarm.wav"
+    } else if ($stability < 50) {
+        @bgm "warning_loop.wav"
+    } else {
+        @bgm "steady_core.wav"
+    }
+
+    #STORY
+    SYS: "Core stability reading: ${stability}."
+
+    if ($stability < 25) {
+        TEO: "Critical state. We route power away from habitation sectors now."
+        @jump route_critical
+    } else if ($stability < 50) {
+        TEO: "Unstable, but recoverable. Start staged coolant rotation."
+        @jump route_warning
+    } else {
+        TEO: "Nominal condition. Running boundary verification before handoff."
+        @jump boundary_probe
+    }
+}
+
+* boundary_probe {
+
+    #STORY
+    // Boundary condition showcase around the threshold value 50.
+    if ($stability < 50) {
+        SYS: "Boundary check: below threshold."
+        @jump route_warning
+    } else if ($stability == 50) {
+        SYS: "Boundary check: exact threshold match."
+        @jump route_nominal
+    } else {
+        SYS: "Boundary check: above threshold."
+        @jump route_nominal
+    }
+}
+
+* route_critical {
+
+    #STORY
+    "Emergency shutters slam into place while backup turbines spin up."
+    @end
+}
+
+* route_warning {
+
+    #STORY
+    "Cooling channels rebalance load and the vibration drops to manageable levels."
+    @end
+}
+
+* route_nominal {
+
+    #STORY
+    "Control returns to standard operation with all indicators in green range."
+    @end
+}
+
+// ---------------------------------------------------------------------------
+// Failure case notes (intentionally not executable):
+//
+// F001 -> E_SYNTAX
+// if ($stability < 25) { ... } else if $stability < 50 { ... }
+// Reason: else-if must be exactly: else if (<expr>) { ... }
+//
+// F002 -> E_CONDITION_TYPE_INVALID
+// else if ("warning") { ... }
+// Reason: condition must evaluate to boolean.
+//
+// F003 -> E_STORY_UNTERMINATED_PATH
+// if ($a) { @jump x } else if ($b) { @jump y }
+// Reason: reachable fallthrough path without @choice/@jump/@end.
+// ---------------------------------------------------------------------------

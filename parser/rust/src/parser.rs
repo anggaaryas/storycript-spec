@@ -712,19 +712,25 @@ impl Parser {
 
         let else_branch = if self.peek() == &Token::Else {
             self.advance();
-            if !self.expect(&Token::LBrace) {
-                return None;
-            }
-            let mut stmts = Vec::new();
-            while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                if let Some(stmt) = self.parse_prep_statement(scene) {
-                    stmts.push(stmt);
+            if self.peek() == &Token::If {
+                let nested_if = self.parse_prep_if_else(scene)?;
+                Some(vec![PrepStatement::IfElse(nested_if)])
+            } else {
+                if !self.expect(&Token::LBrace) {
+                    return None;
                 } else {
-                    self.advance();
+                    let mut stmts = Vec::new();
+                    while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                        if let Some(stmt) = self.parse_prep_statement(scene) {
+                            stmts.push(stmt);
+                        } else {
+                            self.advance();
+                        }
+                    }
+                    self.expect(&Token::RBrace);
+                    Some(stmts)
                 }
             }
-            self.expect(&Token::RBrace);
-            Some(stmts)
         } else {
             None
         };
@@ -1221,22 +1227,28 @@ impl Parser {
 
         let else_branch = if self.peek() == &Token::Else {
             self.advance();
-            if !self.expect(&Token::LBrace) {
-                return None;
-            }
-            let mut stmts = Vec::new();
-            while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                if let Some(stmt) = self.parse_story_statement(scene) {
-                    stmts.push(stmt);
+            if self.peek() == &Token::If {
+                let nested_if = self.parse_story_if_else(scene)?;
+                Some(vec![nested_if])
+            } else {
+                if !self.expect(&Token::LBrace) {
+                    return None;
                 } else {
-                    if matches!(self.peek(), Token::RBrace | Token::Eof) {
-                        break;
+                    let mut stmts = Vec::new();
+                    while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                        if let Some(stmt) = self.parse_story_statement(scene) {
+                            stmts.push(stmt);
+                        } else {
+                            if matches!(self.peek(), Token::RBrace | Token::Eof) {
+                                break;
+                            }
+                            self.advance();
+                        }
                     }
-                    self.advance();
+                    self.expect(&Token::RBrace);
+                    Some(stmts)
                 }
             }
-            self.expect(&Token::RBrace);
-            Some(stmts)
         } else {
             None
         };
