@@ -1,0 +1,415 @@
+// ============================================================================
+//
+//   THE CRESCENT MOON BOOKSHOP
+//   A StoryScript Showcase — Written for First-Time Readers
+//
+//   This file is a guided tour of the StoryScript language.
+//   Every feature is introduced naturally through a short story,
+//   and each section is explained in plain language above the code.
+//
+//   You do not need to know how to program to read and enjoy this.
+//
+// ============================================================================
+
+
+// ============================================================================
+// INIT — "Setting the Stage Before the Curtain Rises"
+//
+// Before the story begins, we declare everything the engine needs to know:
+// who the characters are, what variables track the story's state, and
+// which scene to start from.
+//
+// Think of this as the "backstage checklist" — it runs once, before anything
+// appears on screen.
+// ============================================================================
+
+* INIT {
+
+    // --- Story State ---
+    // These are like little notepads the story carries with it.
+    // They remember choices, track progress, and shape the outcome.
+
+    $visitor_name as string  = "Mira"          // Who is our visitor?
+    $coins        as integer = 20              // How much money does she have?
+    $books_read   as integer = 0               // How many books has she browsed?
+    $raining      as boolean = true            // Is it raining outside?
+    $found_rare   as boolean = false           // Did she find the rare book?
+
+    // A shelf of recommended titles — stored as a list of strings.
+    // We'll loop through these later to display them one by one.
+    $shelf as array<string> = [
+        "The Starbound Atlas",
+        "Whispers of the Sea",
+        "A Map of Forgotten Places"
+    ]
+
+    // A second list to track which books Mira actually picks up.
+    // It starts empty and grows as she browses.
+    $browsed as array<string> = []
+
+
+    // --- Characters ---
+    // @actor registers a character with the engine.
+    // The key in quotes is the display name. The block maps mood names to portrait files.
+
+    @actor ASHA "Asha" {
+        warm    -> "asha_warm.png"
+        curious -> "asha_curious.png"
+        excited -> "asha_excited.png"
+        gentle  -> "asha_gentle.png"
+    }
+
+    // This actor has no portrait — she'll appear as text only.
+    // Useful for background characters, narrators, or mysterious presences.
+    @actor CAT "A Strange Cat"
+
+
+    // --- Entry Point ---
+    // @start tells the engine which scene to run first.
+    @start enter_the_shop
+}
+
+
+// ============================================================================
+// Scene: enter_the_shop
+// "The door opens, and the story begins."
+//
+// Every scene has two phases:
+//   #PREP  — runs silently before anything is shown. Use it to set up
+//            backgrounds, music, and update variables.
+//   #STORY — everything the player sees, reads, and interacts with.
+// ============================================================================
+
+* enter_the_shop {
+
+    // --- #PREP: Prepare the scene invisibly ---
+    // The player sees none of this. It happens behind the scenes.
+    #PREP
+    @bg  "rainy_cobblestone_street.png"
+    @bgm "soft_rain_ambience.ogg"
+    @sfx "old_door_creak.wav"
+
+    // --- #STORY: What the player reads and experiences ---
+    #STORY
+
+    "Rain taps softly against the cobblestones outside."
+    "You duck beneath a painted sign — a crescent moon — and push open the door."
+    "Warm amber light spills over row after row of books."
+
+    // An if/else lets us write different dialogue depending on the situation.
+    // $raining is true, so the first greeting plays.
+    if ($raining == true) {
+        ASHA(warm, Right): "Oh! Come in, come in — you must be soaked. Welcome."
+    } else {
+        ASHA(warm, Right): "Good afternoon! Welcome to the Crescent Moon Bookshop."
+    }
+
+    ASHA(curious, Right): "My name is Asha. What brings you in today, ${visitor_name}?"
+
+    // @choice pauses the story and waits for the player to decide.
+    // Each line maps a label to the next scene using ->.
+    @choice {
+        "I'd like to browse the shelves"            -> browse_shelves
+        "Tell me about this place"                  -> ask_about_the_shop
+        "I'm looking for something specific"        -> search_rare_book
+    }
+}
+
+
+// ============================================================================
+// Scene: browse_shelves
+// "For-loops let us do something for every item in a list."
+//
+// Here we loop through $shelf — the list of recommended titles —
+// and display each one to the player. We also log what Mira picks up
+// using array_push, which adds an item to a list.
+// ============================================================================
+
+* browse_shelves {
+
+    #PREP
+    @sfx "soft_book_flip.wav"
+
+    // Loop through the shelf list and count each title as "browsed."
+    // "snapshot" means we take a copy of the list at this exact moment
+    // so that any changes inside the loop don't affect what we're iterating.
+    for ($title in snapshot $shelf) {
+        $books_read = $books_read + 1
+        array_push($browsed, $title)
+    }
+
+    #STORY
+    "You wander between the shelves, trailing your fingers along the spines."
+    "Asha has left a small handwritten card: 'Today's Recommendations.'"
+
+    // Same for-loop in #STORY — this time, we display each title to the player.
+    for ($title in snapshot $shelf) {
+        "  — ${title}"
+    }
+
+    // ${books_read} is string interpolation — it inserts the variable's value
+    // directly into the text at that spot.
+    ASHA(gentle, Right): "You've looked through ${books_read} titles. Take your time."
+
+    @choice {
+        "Pick up 'The Starbound Atlas'"          -> read_starbound_atlas
+        "Head to the back of the shop"           -> back_of_shop
+        "Ask about the price of a book"          -> ask_price
+    }
+}
+
+
+// ============================================================================
+// Scene: ask_about_the_shop
+// "Simple dialogue and a jump to keep the story flowing."
+//
+// @jump automatically moves to the next scene without asking the player.
+// It's useful for transitions, cutscenes, or merging paths back together.
+// ============================================================================
+
+* ask_about_the_shop {
+
+    #PREP
+    @sfx "soft_chime.wav"
+
+    #STORY
+    ASHA(curious, Right): "This shop has been here for over a hundred years."
+    ASHA(warm, Right): "My grandmother opened it. And her grandmother before her."
+
+    // CAT has no portrait, so we use the name-only form.
+    CAT: "Mrrrow."
+
+    ASHA(gentle, Right): "That is Cobble. He has lived here longer than any of the books."
+    ASHA(curious, Right): "He is usually indifferent to strangers. He must like you."
+
+    @choice {
+        "Browse the recommendations"            -> browse_shelves
+        "Head to the back of the shop"          -> back_of_shop
+    }
+}
+
+
+// ============================================================================
+// Scene: search_rare_book
+// "Local variables and conditional choices."
+//
+// Local variables live only inside the scene they're declared in.
+// They're created in #PREP and forgotten when the scene ends.
+// We use one here to check whether Mira can afford the book before
+// showing the "Buy" option in @choice.
+// ============================================================================
+
+* search_rare_book {
+
+    #PREP
+    @sfx "page_rustle.wav"
+
+    // $can_afford is a local variable — it only exists inside this scene.
+    // This avoids cluttering the global state with a one-use flag.
+    $can_afford as boolean = false
+    if ($coins >= 15) {
+        $can_afford = true
+    }
+
+    #STORY
+    "You describe a book you once heard of — a hand-illustrated guide to forgotten star maps."
+
+    ASHA(excited, Right): "The Vellum Star Charts? I do have one copy left. It's very old."
+    ASHA(gentle, Right): "Quite rare. It costs fifteen coins."
+
+    // The "Buy" option only appears when $can_afford is true.
+    // If the player doesn't have enough coins, that option is hidden entirely.
+    if ($can_afford == true) {
+        ASHA(warm, Right): "You look like you can manage that. Shall I wrap it for you?"
+    } else {
+        ASHA(gentle, Right): "I'll hold it for you, if you like. Come back when you're ready."
+    }
+
+    @choice {
+        if ($can_afford == true) {
+            "Buy the Vellum Star Charts — 15 coins"  -> buy_rare_book
+        }
+        "Maybe another time"                          -> browse_shelves
+    }
+}
+
+
+// ============================================================================
+// Scene: buy_rare_book
+// "Updating variables and transitioning with @jump."
+//
+// Here we spend the coins and set a flag so later scenes remember this moment.
+// ============================================================================
+
+* buy_rare_book {
+
+    #PREP
+    @sfx "coin_clink.wav"
+
+    // Deduct the cost and mark the rare book as found.
+    // These changes persist throughout the rest of the story.
+    $coins      = $coins - 15
+    $found_rare = true
+
+    #STORY
+    ASHA(excited, Right): "Wonderful choice, ${visitor_name}. I know you'll treasure it."
+    "She wraps the book in brown paper and ties it with a pale blue ribbon."
+    "The book feels warm in your hands — warmer than paper has any right to be."
+    "You now have ${coins} coins remaining."
+
+    // @jump moves silently to farewell — no choice needed here.
+    @jump farewell
+}
+
+
+// ============================================================================
+// Scene: read_starbound_atlas
+// "Branching choices with a price check."
+// ============================================================================
+
+* read_starbound_atlas {
+
+    #PREP
+    @sfx "page_rustle.wav"
+    $books_read = $books_read + 1
+
+    #STORY
+    "You open 'The Starbound Atlas' to a random page."
+    "A hand-drawn map of a constellation you have never seen fills the spread."
+
+    ASHA(curious, Right): "Drawn by a sailor who swore she had sailed beyond the edge of the world."
+    ASHA(warm, Right): "Whether it's true — who can say? But the map is beautiful."
+
+    @choice {
+        if ($coins >= 10) {
+            "Buy 'The Starbound Atlas' — 10 coins"  -> buy_atlas
+        }
+        "Put it back and keep browsing"             -> browse_shelves
+        "Head to the back of the shop"              -> back_of_shop
+    }
+}
+
+
+// ============================================================================
+// Scene: buy_atlas
+// ============================================================================
+
+* buy_atlas {
+
+    #PREP
+    @sfx "coin_clink.wav"
+    $coins      = $coins - 10
+
+    #STORY
+    "You hand over ten coins. Asha tucks a small hand-drawn bookmark between the pages."
+    "You now have ${coins} coins left."
+
+    @jump farewell
+}
+
+
+// ============================================================================
+// Scene: ask_price
+// "Displaying a variable and keeping the flow simple."
+// ============================================================================
+
+* ask_price {
+
+    #PREP
+    @sfx "soft_chime.wav"
+
+    #STORY
+    ASHA(gentle, Right): "Most books are ten coins. The older, handmade ones are fifteen."
+    ASHA(warm, Right): "Everything on the top shelf is five — I mark those down every Friday."
+
+    // Show the player's current coin count using interpolation.
+    "You have ${coins} coins with you today."
+
+    @choice {
+        "Browse the recommendations"            -> browse_shelves
+        "Head to the back of the shop"          -> back_of_shop
+    }
+}
+
+
+// ============================================================================
+// Scene: back_of_shop
+// "Repeat loops for atmosphere."
+//
+// repeat(n) runs a block exactly n times.
+// Here it's used for a short, eerie atmospheric effect —
+// a page that turns on its own, three times, in an empty corner.
+// ============================================================================
+
+* back_of_shop {
+
+    #PREP
+    @bg  "old_library_corner.png"
+    @bgm "quiet_dusty_wonder.ogg"
+
+    #STORY
+    "The back of the shop is darker. Older."
+    "Dust motes drift through a single shaft of light from a high window."
+
+    // Three short beats of atmosphere, written once but played three times.
+    repeat (3) {
+        "Somewhere nearby, a page turns — though no one is there."
+    }
+
+    CAT: "Mrrrow."
+    ASHA(curious, Right): "Cobble only comes back here for people he trusts."
+    ASHA(warm, Right): "I think that means something."
+
+    @jump farewell
+}
+
+
+// ============================================================================
+// Scene: farewell
+// "The ending — shaped by everything that came before."
+//
+// This is the final scene. It uses if/else if/else to check the story's
+// accumulated state and deliver a personalised goodbye.
+//
+// @end closes the story completely.
+// ============================================================================
+
+* farewell {
+
+    #PREP
+    @bgm "rain_fading_softly.ogg"
+
+    // Decide the ending tone based on what Mira did.
+    // This is a local variable — it won't persist after this scene.
+    $left_happy as boolean = false
+    if ($found_rare == true) {
+        $left_happy = true
+    } else if ($books_read >= 2) {
+        $left_happy = true
+    }
+
+    #STORY
+
+    // Different farewell depending on whether she found the rare book.
+    if ($found_rare == true) {
+        ASHA(excited, Right): "Take care of that one, ${visitor_name}. It has its own kind of magic."
+    } else {
+        ASHA(warm, Right): "Come back anytime, ${visitor_name}. We keep good hours."
+    }
+
+    "You step back out into the rain."
+
+    // Different closing narration depending on how the visit went.
+    if ($left_happy == true) {
+        "Somehow, the walk home feels shorter than usual."
+        "And the rain, for once, does not feel cold at all."
+    } else if ($books_read == 1) {
+        "You've read one title. The Atlas stays in your mind the whole walk home."
+    } else {
+        "You make a note to come back on Friday, when the top shelf goes on sale."
+    }
+
+    // @end marks the absolute end of the story.
+    // No more scenes, no more choices — just the credits rolling.
+    @end
+}
