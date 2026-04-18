@@ -70,7 +70,15 @@ StoryScript uses:
 - Built-ins: `abs(x)`, `rand()`, `rand(min, max)`, `pick([a, b, ...])`
 - `${var}` inline interpolation in string literals across all phases (`\$` for literal dollar)
 - Typed declarations in `* INIT` using `as integer|string|boolean|decimal`
+- Typed local declarations in `#PREP` using the same shape: `$name as <type> = <expr>`
 - Variable type is immutable after declaration
+
+Local scope notes:
+
+- Local declarations are allowed only in `#PREP`
+- Locals are visible in both `#PREP` and `#STORY` of the same scene
+- Locals are reset every time that scene is entered/re-entered
+- Local names cannot collide with globals declared in `* INIT`
 
 Built-in notes:
 

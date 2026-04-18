@@ -151,15 +151,25 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
     // -----------------------------------------------------------------------
 
     for scene in &script.scenes {
+        let mut scoped_vars = declared_vars.clone();
+        let mut local_vars: HashSet<String> = HashSet::new();
+
         // Validate #PREP
         if let Some(prep) = &scene.prep {
-            validate_prep_statements(&prep.statements, &declared_vars, &scene.label, &mut diags);
+            validate_prep_statements(
+                &prep.statements,
+                &declared_vars,
+                &mut scoped_vars,
+                &mut local_vars,
+                &scene.label,
+                &mut diags,
+            );
         }
 
         // Validate #STORY
         validate_story_statements(
             &scene.story.statements,
-            &declared_vars,
+            &scoped_vars,
             &actor_map,
             &scene_labels,
             &scene.label,
@@ -189,14 +199,76 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
 
 fn validate_prep_statements(
     stmts: &[PrepStatement],
-    declared_vars: &VarTypes,
+    global_vars: &VarTypes,
+    scoped_vars: &mut VarTypes,
+    local_vars: &mut HashSet<String>,
     scene: &str,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
         match stmt {
+            PrepStatement::VarDecl(decl) => {
+                if global_vars.contains_key(&decl.name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EVariableScopeConflict,
+                        format!(
+                            "Local variable '${}' conflicts with global variable of the same name",
+                            decl.name
+                        ),
+                        Phase::Validation,
+                        scene,
+                        decl.line,
+                        decl.column,
+                    ));
+                    continue;
+                }
+
+                if local_vars.contains(&decl.name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ELocalDuplicate,
+                        format!(
+                            "Duplicate local variable '${}' in scene '{}'",
+                            decl.name, scene
+                        ),
+                        Phase::Validation,
+                        scene,
+                        decl.line,
+                        decl.column,
+                    ));
+                    continue;
+                }
+
+                if let Some(value_type) = infer_expr_type(
+                    &decl.value,
+                    decl.line,
+                    decl.column,
+                    Some(decl.var_type),
+                    scoped_vars,
+                    scene,
+                    diags,
+                ) {
+                    if !is_assignable(decl.var_type, value_type) {
+                        diags.push(Diagnostic::new(
+                            DiagnosticCode::EVariableTypeMismatch,
+                            format!(
+                                "Variable '${}' is declared as {}, but initializer has type {}",
+                                decl.name,
+                                type_name(decl.var_type),
+                                type_name(value_type)
+                            ),
+                            Phase::Validation,
+                            scene,
+                            decl.line,
+                            decl.column,
+                        ));
+                    }
+                }
+
+                local_vars.insert(decl.name.clone());
+                scoped_vars.insert(decl.name.clone(), decl.var_type);
+            }
             PrepStatement::VarAssign(assign) => {
-                let declared_type = declared_vars.get(&assign.name).copied();
+                let declared_type = scoped_vars.get(&assign.name).copied();
                 if declared_type.is_none() {
                     diags.push(Diagnostic::new(
                         DiagnosticCode::EVariableUndeclaredWrite,
@@ -213,7 +285,7 @@ fn validate_prep_statements(
                     assign.line,
                     assign.column,
                     declared_type,
-                    declared_vars,
+                    scoped_vars,
                     scene,
                     diags,
                 );
@@ -309,7 +381,7 @@ fn validate_prep_statements(
                     if_else.line,
                     if_else.column,
                     None,
-                    declared_vars,
+                    scoped_vars,
                     scene,
                     diags,
                 );
@@ -326,13 +398,27 @@ fn validate_prep_statements(
                     }
                 }
 
-                validate_prep_statements(&if_else.then_branch, declared_vars, scene, diags);
+                validate_prep_statements(
+                    &if_else.then_branch,
+                    global_vars,
+                    scoped_vars,
+                    local_vars,
+                    scene,
+                    diags,
+                );
                 if let Some(else_branch) = &if_else.else_branch {
-                    validate_prep_statements(else_branch, declared_vars, scene, diags);
+                    validate_prep_statements(
+                        else_branch,
+                        global_vars,
+                        scoped_vars,
+                        local_vars,
+                        scene,
+                        diags,
+                    );
                 }
             }
             PrepStatement::BgDirective { path, line, column } => {
-                validate_interpolated_string(path, *line, *column, declared_vars, scene, diags);
+                validate_interpolated_string(path, *line, *column, scoped_vars, scene, diags);
             }
             PrepStatement::BgmDirective {
                 value,
@@ -340,11 +426,11 @@ fn validate_prep_statements(
                 column,
             } => {
                 if let BgmValue::Path(path) = value {
-                    validate_interpolated_string(path, *line, *column, declared_vars, scene, diags);
+                    validate_interpolated_string(path, *line, *column, scoped_vars, scene, diags);
                 }
             }
             PrepStatement::SfxDirective { path, line, column } => {
-                validate_interpolated_string(path, *line, *column, declared_vars, scene, diags);
+                validate_interpolated_string(path, *line, *column, scoped_vars, scene, diags);
             }
         }
     }
@@ -1554,6 +1640,121 @@ mod tests {
         let diags = parse_and_validate(src);
         assert!(diags.iter().any(|d| {
             d.code == DiagnosticCode::EExpressionTypeInvalid && d.message.contains("Operator '%'")
+        }));
+    }
+
+    #[test]
+    fn test_scene_local_visible_in_same_scene_story() {
+        let src = r#"
+* INIT {
+    $global_count as integer = 3
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    $damage as integer = $global_count + 2
+
+    #STORY
+    "Damage was ${damage}"
+    $damage
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        let errors: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_scene_local_not_visible_in_other_scene() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start first
+}
+* first {
+    #PREP
+    $temp as integer = 10
+
+    #STORY
+    @jump second
+}
+* second {
+    #STORY
+    "Temp=${temp}"
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EVariableUndeclaredRead
+                && d.message.contains("$temp")
+                && d.scene == "second"
+        }));
+    }
+
+    #[test]
+    fn test_scene_local_global_collision_rejected() {
+        let src = r#"
+* INIT {
+    $score as integer = 10
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    $score as integer = 1
+
+    #STORY
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EVariableScopeConflict));
+    }
+
+    #[test]
+    fn test_scene_local_duplicate_rejected() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    $x as integer = 1
+    $x as integer = 2
+
+    #STORY
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::ELocalDuplicate));
+    }
+
+    #[test]
+    fn test_scene_local_declaration_forbidden_in_story() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #STORY
+    $x as integer = 1
+    @end
+}
+"#;
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EPhaseTokenForbidden
+                && d.message.contains("declaration is forbidden in #STORY")
         }));
     }
 }

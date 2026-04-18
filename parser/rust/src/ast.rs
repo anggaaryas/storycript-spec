@@ -99,6 +99,7 @@ pub enum PrepStatement {
         line: usize,
         column: usize,
     },
+    VarDecl(VarDecl),
     VarAssign(VarAssign),
     IfElse(PrepIfElse),
 }

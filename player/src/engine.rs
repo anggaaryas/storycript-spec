@@ -89,6 +89,8 @@ pub struct Engine {
     actors: HashMap<String, ActorInfo>,
     pub variables: HashMap<String, Value>,
     var_types: HashMap<String, VarType>,
+    local_variables: HashMap<String, Value>,
+    local_var_types: HashMap<String, VarType>,
     pub current_scene: String,
     pub bg: Option<String>,
     pub bgm: Option<String>,
@@ -134,6 +136,8 @@ impl Engine {
             actors,
             variables,
             var_types,
+            local_variables: HashMap::new(),
+            local_var_types: HashMap::new(),
             current_scene: String::new(),
             bg: None,
             bgm: None,
@@ -159,6 +163,8 @@ impl Engine {
         };
 
         self.current_scene = label.to_string();
+        self.local_variables.clear();
+        self.local_var_types.clear();
 
         // Execute #PREP (silent — modifies state, sets assets)
         if let Some(prep) = &scene.prep {
@@ -206,8 +212,46 @@ impl Engine {
                 PrepStatement::SfxDirective { .. } => {
                     // SFX: can't play audio in TUI, skip
                 }
+                PrepStatement::VarDecl(decl) => {
+                    if self.var_types.contains_key(&decl.name)
+                        || self.local_var_types.contains_key(&decl.name)
+                    {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "Duplicate variable declaration for '${}' in scene '{}'",
+                                decl.name, self.current_scene
+                            ),
+                        );
+                        return false;
+                    }
+
+                    let value = match self.eval_expr(&decl.value, Some(decl.var_type)) {
+                        Some(v) => v,
+                        None => return false,
+                    };
+                    let value_type = value_type(&value);
+                    let coerced = match coerce_value_for_type(value, decl.var_type) {
+                        Some(v) => v,
+                        None => {
+                            self.raise_runtime_error(
+                                "RUNTIME",
+                                format!(
+                                    "Type mismatch initializing local ${}. Expected {}, got {}",
+                                    decl.name,
+                                    type_name(decl.var_type),
+                                    type_name(value_type)
+                                ),
+                            );
+                            return false;
+                        }
+                    };
+
+                    self.local_var_types.insert(decl.name.clone(), decl.var_type);
+                    self.local_variables.insert(decl.name.clone(), coerced);
+                }
                 PrepStatement::VarAssign(assign) => {
-                    let declared_type = match self.var_types.get(&assign.name).copied() {
+                    let declared_type = match self.resolve_var_type(&assign.name) {
                         Some(ty) => ty,
                         None => {
                             self.raise_runtime_error(
@@ -241,10 +285,10 @@ impl Engine {
                                     return false;
                                 }
                             };
-                            self.variables.insert(assign.name.clone(), coerced);
+                            self.write_variable(&assign.name, coerced);
                         }
                         AssignOp::AddEq | AssignOp::SubEq => {
-                            let current = match self.variables.get(&assign.name).cloned() {
+                            let current = match self.resolve_var_value(&assign.name).cloned() {
                                 Some(value) => value,
                                 None => {
                                     self.raise_runtime_error(
@@ -285,7 +329,7 @@ impl Engine {
                                         AssignOp::SubEq => Value::Int(a - b),
                                         AssignOp::Set => Value::Int(a),
                                     };
-                                    self.variables.insert(assign.name.clone(), updated);
+                                    self.write_variable(&assign.name, updated);
                                 }
                                 VarType::Decimal => {
                                     let current_num = match as_decimal(&current) {
@@ -326,7 +370,7 @@ impl Engine {
                                         AssignOp::SubEq => Value::Decimal(current_num - rhs_num),
                                         AssignOp::Set => Value::Decimal(current_num),
                                     };
-                                    self.variables.insert(assign.name.clone(), updated);
+                                    self.write_variable(&assign.name, updated);
                                 }
                                 VarType::String | VarType::Boolean => {
                                     self.raise_runtime_error(
@@ -385,7 +429,7 @@ impl Engine {
                     self.pending.push_back(InternalEvent::Narration(resolved));
                 }
                 StoryStatement::VarOutput { name, .. } => {
-                    if let Some(value) = self.variables.get(name) {
+                    if let Some(value) = self.resolve_var_value(name) {
                         self.pending
                             .push_back(InternalEvent::Narration(Self::value_to_plain_text(value)));
                     } else {
@@ -568,7 +612,7 @@ impl Engine {
                 .resolve_string_or_error(s, "string expression")
                 .map(Value::Str),
             Expr::VarRef { name, .. } => {
-                if let Some(value) = self.variables.get(name).cloned() {
+                if let Some(value) = self.resolve_var_value(name).cloned() {
                     Some(value)
                 } else {
                     self.raise_runtime_error(
@@ -1079,10 +1123,29 @@ impl Engine {
     }
 
     fn resolve_string(&self, template: &str) -> Result<String, String> {
-        render_interpolated(template, |name| {
-            self.variables.get(name).map(Self::value_to_plain_text)
-        })
+        render_interpolated(template, |name| self.resolve_var_value(name).map(Self::value_to_plain_text))
         .map_err(|e| e.message)
+    }
+
+    fn resolve_var_type(&self, name: &str) -> Option<VarType> {
+        self.local_var_types
+            .get(name)
+            .copied()
+            .or_else(|| self.var_types.get(name).copied())
+    }
+
+    fn resolve_var_value(&self, name: &str) -> Option<&Value> {
+        self.local_variables
+            .get(name)
+            .or_else(|| self.variables.get(name))
+    }
+
+    fn write_variable(&mut self, name: &str, value: Value) {
+        if self.local_var_types.contains_key(name) {
+            self.local_variables.insert(name.to_string(), value);
+        } else {
+            self.variables.insert(name.to_string(), value);
+        }
     }
 
     fn value_to_plain_text(value: &Value) -> String {

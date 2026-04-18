@@ -52,6 +52,7 @@ A standard scene is defined using `* <scene_label> { ... }`. Every scene operate
 The invisible backend phase. The parser executes all math, updates state arrays, and queues engine assets instantly before rendering anything to the screen. 
 
 * **Allowed Tokens:** `$`, `@bg`, `@bgm`, `@sfx`, `if`/`else`.
+* **Variable Declaration:** Typed local declarations are allowed only in `#PREP` (`$name as <type> = <expr>`).
 * **Forbidden Tokens:** `"Narrative text"`, `ActorID()`, standalone STORY output (`$var`), `@choice`, `@jump`, `@end`.
 
 ### Phase 2: `#STORY` (Rendering & Interaction Phase)
@@ -82,6 +83,13 @@ Standard C-style conditionals are supported in both `#PREP` and `#STORY` blocks.
 * In `#PREP`: variable reads and writes are allowed.
 * In `#STORY`: variable reads are allowed, but writes are forbidden.
 * Assignment in `#PREP` must preserve declared variable type (`decimal` may accept integer assignment).
+
+**Scene-Local Declaration Rule:**
+* In `#PREP`, local declaration syntax is `$name as <type> = <expr>`.
+* Local variables are visible only inside the declaring scene (`#PREP` and `#STORY` of that scene).
+* Local variables are reset when the scene is entered again (including loop/re-entry via `@jump` or `@choice`).
+* Local declaration in `#STORY` is forbidden.
+* Local names must not collide with global names.
 
 **Arithmetic Operators:**
 * Supported numeric operators: `+`, `-`, `*`, `/`, `%`.
@@ -225,6 +233,9 @@ The compiler must fail the script when any of the following is true:
 * Any portrait-form dialogue targets an actor declared without portraits.
 * Any variable is read before declaration.
 * Any variable assignment targets an undeclared variable.
+* Any local variable declaration appears outside `#PREP`.
+* Any scene declares duplicate local variable names.
+* Any local variable declaration collides with an existing global variable name.
 * Any variable assignment violates declared type.
 * Any compound assignment (`+=`, `-=`) targets non-numeric variable types.
 * Any expression uses incompatible operand types for its operator.
@@ -258,6 +269,8 @@ Diagnostic code naming:
 | `E_ACTOR_DUPLICATE` | Duplicate actor IDs exist. |
 | `E_EMOTION_DUPLICATE` | Duplicate emotion keys exist inside one actor portrait map. |
 | `E_GLOBAL_DUPLICATE` | Duplicate global variable declarations exist in `* INIT`. |
+| `E_LOCAL_DUPLICATE` | Duplicate local variable declarations exist within one scene scope. |
+| `E_VARIABLE_SCOPE_CONFLICT` | A local variable declaration collides with a global variable name. |
 | `E_START_TARGET_MISSING` | `@start` points to a non-existent scene. |
 | `E_JUMP_TARGET_MISSING` | Any `@jump` target does not exist. |
 | `E_CHOICE_TARGET_MISSING` | Any `@choice` option target does not exist. |
@@ -268,8 +281,8 @@ Diagnostic code naming:
 | `E_POSITION_INVALID` | Portrait-form dialogue uses an invalid position token. |
 | `E_EMOTION_UNKNOWN` | Portrait-form dialogue uses an unknown emotion key. |
 | `E_PORTRAIT_MODE_INVALID` | Portrait-form dialogue targets an actor declared without portraits. |
-| `E_VARIABLE_UNDECLARED_READ` | A variable is read before declaration (including `${var}` interpolation and standalone STORY output `$var`). |
-| `E_VARIABLE_UNDECLARED_WRITE` | A variable assignment targets an undeclared variable. |
+| `E_VARIABLE_UNDECLARED_READ` | A variable is read before declaration or outside its scope (including `${var}` interpolation and standalone STORY output `$var`). |
+| `E_VARIABLE_UNDECLARED_WRITE` | A variable assignment targets an undeclared variable or a variable outside its scope. |
 | `E_VARIABLE_TYPE_MISMATCH` | Variable assignment or initializer type is incompatible with its declared variable type. |
 | `E_VARIABLE_COMPOUND_ASSIGN_INVALID` | Compound assignment (`+=`, `-=`) is used on non-numeric variable type. |
 | `E_EXPRESSION_TYPE_INVALID` | Expression operator is used with incompatible operand types. |
@@ -282,6 +295,15 @@ Diagnostic code naming:
 | `E_CONDITION_TYPE_INVALID` | Condition expression does not evaluate to boolean. |
 | `E_CHOICE_STATIC_EMPTY` | `@choice` is provably empty after compile-time constant folding. |
 | `E_STORY_UNTERMINATED_PATH` | A reachable `#STORY` path can fall through without `@choice`, `@jump`, or `@end`. |
+
+#### Scene-Local Variable Diagnostic Mapping
+| Rule ID | Validation Condition | Diagnostic Code | Rationale |
+| :--- | :--- | :--- | :--- |
+| `LS001` | Local declaration appears outside `#PREP`. | `E_PHASE_TOKEN_FORBIDDEN` | Phase legality already standardized by existing forbidden-token rule. |
+| `LS002` | Two local declarations with the same name appear in one scene. | `E_LOCAL_DUPLICATE` | Distinguishes local redeclaration from global redeclaration. |
+| `LS003` | A local declaration name matches a global declaration name. | `E_VARIABLE_SCOPE_CONFLICT` | Enforces no-shadowing policy with explicit scope-conflict code. |
+| `LS004` | A local variable is read outside its declaring scene. | `E_VARIABLE_UNDECLARED_READ` | Out-of-scope reads are treated as undeclared in the current scene scope. |
+| `LS005` | A local variable is written outside its declaring scene. | `E_VARIABLE_UNDECLARED_WRITE` | Out-of-scope writes are treated as undeclared in the current scene scope. |
 
 #### Compile-Time Warnings
 | Code | Trigger |

@@ -199,7 +199,7 @@ impl Parser {
             if !self.expect(&Token::As) {
                 return None;
             }
-            let var_type = self.parse_var_type()?;
+            let var_type = self.parse_var_type("INIT")?;
             if !self.expect(&Token::Eq) {
                 return None;
             }
@@ -225,7 +225,7 @@ impl Parser {
         }
     }
 
-    fn parse_var_type(&mut self) -> Option<VarType> {
+    fn parse_var_type(&mut self, scene: &str) -> Option<VarType> {
         let (line, column) = self.current_span();
         let var_type = match self.peek() {
             Token::TypeInteger => VarType::Integer,
@@ -240,7 +240,7 @@ impl Parser {
                         self.peek().name()
                     ),
                     Phase::Parse,
-                    "INIT",
+                    scene,
                     line,
                     column,
                 ));
@@ -562,7 +562,13 @@ impl Parser {
                 }
             }
             Token::Dollar => {
-                if let Some(assign) = self.parse_var_assign(scene) {
+                if matches!(self.peek_n(1), Token::Ident(_)) && self.peek_n(2) == &Token::As {
+                    if let Some(decl) = self.parse_scene_var_decl(scene) {
+                        Some(PrepStatement::VarDecl(decl))
+                    } else {
+                        None
+                    }
+                } else if let Some(assign) = self.parse_var_assign(scene) {
                     Some(PrepStatement::VarAssign(assign))
                 } else {
                     None
@@ -627,6 +633,41 @@ impl Parser {
             Some(VarAssign {
                 name,
                 op,
+                value,
+                line,
+                column,
+            })
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "Expected variable name after '$'",
+                Phase::Parse,
+                scene,
+                line,
+                column,
+            ));
+            None
+        }
+    }
+
+    fn parse_scene_var_decl(&mut self, scene: &str) -> Option<VarDecl> {
+        let (line, column) = self.current_span();
+        self.advance(); // $
+
+        if let Token::Ident(name) = self.peek().clone() {
+            self.advance();
+            if !self.expect(&Token::As) {
+                return None;
+            }
+            let var_type = self.parse_var_type(scene)?;
+            if !self.expect(&Token::Eq) {
+                return None;
+            }
+            let value = self.parse_expression()?;
+            self.eat_optional_semicolon();
+            Some(VarDecl {
+                name,
+                var_type,
                 value,
                 line,
                 column,
@@ -834,6 +875,26 @@ impl Parser {
             ));
             self.advance(); // assignment operator
             let _ = self.parse_expression();
+            self.eat_optional_semicolon();
+            return None;
+        }
+
+        if self.peek() == &Token::As {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::EPhaseTokenForbidden,
+                "Variable declaration is forbidden in #STORY",
+                Phase::Parse,
+                scene,
+                line,
+                column,
+            ));
+
+            self.advance(); // as
+            let _ = self.parse_var_type(scene);
+            if self.peek() == &Token::Eq {
+                self.advance();
+                let _ = self.parse_expression();
+            }
             self.eat_optional_semicolon();
             return None;
         }

@@ -1,0 +1,35 @@
+* INIT {
+    $system_stability as integer = 40;
+    $breach_runs as integer = 0;
+
+    @actor SYS "System";
+    @actor GIP "Gippie";
+
+    @start scene_firewall_breach;
+}
+
+* scene_firewall_breach {
+    #PREP
+    // Global mutation remains global across scenes.
+    $system_stability -= 10;
+    $breach_runs += 1;
+
+    // Local scope: lives only in this scene entry.
+    $damage_taken as integer = rand(5, 15);
+
+    #STORY
+    SYS: "Breach run ${breach_runs}. Stability now ${system_stability}.";
+    GIP: "${damage_taken} damage absorbed by firewall this run.";
+
+    @choice {
+        "Re-enter this same scene (boundary: local value is recreated)" -> scene_firewall_breach;
+        "Go to report scene" -> scene_report;
+    }
+}
+
+* scene_report {
+    #STORY
+    "Global counters still exist here: run ${breach_runs}, stability ${system_stability}.";
+    "Failure case note: reading \${damage_taken} here would fail compile-time with E_VARIABLE_UNDECLARED_READ because it is scene-local.";
+    @end;
+}
