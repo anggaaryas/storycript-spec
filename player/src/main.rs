@@ -648,16 +648,13 @@ fn display_path(path: &Path) -> String {
 }
 
 fn load_player_from_file(path: &Path) -> Result<App, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", display_path(path), e))?;
+    let compile = storycript_parser::compiler::compile_file(path)
+        .map_err(|e| format!("Failed to compile {}: {}", display_path(path), e))?;
 
-    // Lex
-    let mut lexer = storycript_parser::lexer::Lexer::new(&source);
-    let tokens = lexer.tokenize();
-    if lexer.diagnostics.iter().any(|d| d.is_error()) {
+    if compile.diagnostics.iter().any(|d| d.is_error()) {
         return Err(format_diagnostics(
-            &format!("Lexer errors in {}", display_path(path)),
-            &lexer
+            &format!("Compile errors in {}", display_path(path)),
+            &compile
                 .diagnostics
                 .iter()
                 .map(ToString::to_string)
@@ -665,41 +662,12 @@ fn load_player_from_file(path: &Path) -> Result<App, String> {
         ));
     }
 
-    // Parse
-    let mut parser = storycript_parser::parser::Parser::new(tokens);
-    let script = parser.parse().ok_or_else(|| {
-        format_diagnostics(
-            &format!("Parse errors in {}", display_path(path)),
-            &parser
-                .diagnostics
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
+    let script = compile.script.ok_or_else(|| {
+        format!(
+            "Compile failed to produce script for {}",
+            display_path(path)
         )
     })?;
-
-    if parser.diagnostics.iter().any(|d| d.is_error()) {
-        return Err(format_diagnostics(
-            &format!("Parse errors in {}", display_path(path)),
-            &parser
-                .diagnostics
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-        ));
-    }
-
-    // Validate
-    let validation_diags = storycript_parser::validator::validate(&script);
-    if validation_diags.iter().any(|d| d.is_error()) {
-        return Err(format_diagnostics(
-            &format!("Validation errors in {}", display_path(path)),
-            &validation_diags
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-        ));
-    }
 
     let engine = Engine::new(&script);
     Ok(App::new(display_path(path), engine))

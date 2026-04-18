@@ -27,6 +27,7 @@ pub enum Token {
     // Identifiers & keywords
     Ident(String),
     Init,      // INIT
+    Require,   // REQUIRE
     HashPrep,  // #PREP
     HashStory, // #STORY
 
@@ -39,6 +40,7 @@ pub enum Token {
     AtJump,   // @jump
     AtEnd,    // @end
     AtStart,  // @start
+    AtInclude, // @include
 
     // Keywords
     If,
@@ -90,6 +92,7 @@ impl Token {
             Token::BoolLit(_) => "boolean",
             Token::Ident(_) => "identifier",
             Token::Init => "'INIT'",
+            Token::Require => "'REQUIRE'",
             Token::HashPrep => "'#PREP'",
             Token::HashStory => "'#STORY'",
             Token::AtActor => "'@actor'",
@@ -100,6 +103,7 @@ impl Token {
             Token::AtJump => "'@jump'",
             Token::AtEnd => "'@end'",
             Token::AtStart => "'@start'",
+            Token::AtInclude => "'@include'",
             Token::If => "'if'",
             Token::Else => "'else'",
             Token::As => "'as'",

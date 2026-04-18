@@ -1,0 +1,34 @@
+// ---------------------------------------------------------------------------
+// Feature: Child REQUIRE Contract
+// Focus: Child file has exactly one REQUIRE and no INIT.
+// Coverage: Variable/actor/emotion dependency contract.
+// ---------------------------------------------------------------------------
+
+* REQUIRE {
+    $system_stability as integer;
+    $has_admin_key as boolean;
+
+    @actor TEO [ focus ];
+    @actor GIP [ alert ];
+}
+
+* hack_sequence_start {
+    #PREP
+    $system_stability = $system_stability - 15
+
+    #STORY
+    GIP(alert, Center): "Warning! Countermeasures active."
+
+    if ($has_admin_key == true) {
+        TEO(focus, Left): "Bypassing with admin credentials."
+    } else {
+        "No admin key available."
+    }
+
+    @end
+}
+
+// Failure case notes:
+// - F101: child has no REQUIRE or multiple REQUIRE -> E_REQUIRE_COUNT
+// - F102: child contains INIT -> E_INCLUDE_CHILD_INIT_FORBIDDEN
+// - F103: REQUIRE actor/emotion missing in root INIT -> E_REQUIRE_ACTOR_MISSING / E_REQUIRE_EMOTION_MISSING

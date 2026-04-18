@@ -1,8 +1,8 @@
 use std::env;
-use std::fs;
+use std::path::Path;
 use std::process;
 
-use storycript_parser::{diagnostic, lexer, parser, validator};
+use storycript_parser::{compiler, diagnostic};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -14,34 +14,22 @@ fn main() {
     let file_path = &args[1];
     let json_output = args.iter().any(|a| a == "--json");
 
-    let source = match fs::read_to_string(file_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error reading '{}': {}", file_path, e);
+    let compile = match compiler::compile_file(Path::new(file_path)) {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!("{}", err);
             process::exit(1);
         }
     };
 
-    // Phase 1: Lexing
-    let mut lex = lexer::Lexer::new(&source);
-    let tokens = lex.tokenize();
-    let mut all_diagnostics = lex.diagnostics.clone();
-
-    // Phase 2: Parsing
-    let mut par = parser::Parser::new(tokens);
-    let script = match par.parse() {
+    let mut all_diagnostics = compile.diagnostics;
+    let script = match compile.script {
         Some(s) => s,
         None => {
-            all_diagnostics.extend(par.diagnostics.clone());
             print_diagnostics(&all_diagnostics, json_output);
             process::exit(1);
         }
     };
-    all_diagnostics.extend(par.diagnostics.clone());
-
-    // Phase 3: Semantic Validation
-    let validation_diags = validator::validate(&script);
-    all_diagnostics.extend(validation_diags);
 
     all_diagnostics.sort();
 

@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comment" },
     { "include": "#init-block" },
+    { "include": "#require-block" },
     { "include": "#scene-block" },
     { "include": "#phase-tag" },
     { "include": "#directive" },
@@ -36,10 +37,18 @@
     },
 
     "scene-block": {
-      "match": "(\\*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "match": "(\\*)\\s+(?!INIT\\b)(?!REQUIRE\\b)([a-zA-Z_][a-zA-Z0-9_]*)\\b",
       "captures": {
         "1": { "name": "keyword.operator.scene.storyscript" },
         "2": { "name": "entity.name.function.scene.storyscript" }
+      }
+    },
+
+    "require-block": {
+      "match": "(\\*)\\s+(REQUIRE)\\b",
+      "captures": {
+        "1": { "name": "keyword.operator.scene.storyscript" },
+        "2": { "name": "keyword.control.require.storyscript" }
       }
     },
 
@@ -55,6 +64,7 @@
       "patterns": [
         { "include": "#directive-actor" },
         { "include": "#directive-start" },
+        { "include": "#directive-include" },
         { "include": "#directive-bg" },
         { "include": "#directive-bgm" },
         { "include": "#directive-sfx" },
@@ -105,6 +115,13 @@
       "captures": {
         "1": { "name": "keyword.control.directive.start.storyscript" },
         "2": { "name": "entity.name.function.scene-ref.storyscript" }
+      }
+    },
+
+    "directive-include": {
+      "match": "(@include)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.directive.include.storyscript" }
       }
     },
 

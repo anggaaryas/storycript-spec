@@ -193,6 +193,133 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
     diags
 }
 
+pub fn validate_requirements(init: &InitBlock, modules: &[ChildModule]) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+
+    let mut global_types: HashMap<&str, VarType> = HashMap::new();
+    for var in &init.variables {
+        global_types.insert(var.name.as_str(), var.var_type);
+    }
+
+    let mut actor_emotions: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for actor in &init.actors {
+        let mut emotions = HashSet::new();
+        for portrait in &actor.portraits {
+            emotions.insert(portrait.emotion.as_str());
+        }
+        actor_emotions.insert(actor.id.as_str(), emotions);
+    }
+
+    for module in modules {
+        let req = &module.require;
+
+        let mut seen_vars: HashSet<&str> = HashSet::new();
+        for var in &req.variables {
+            if !seen_vars.insert(var.name.as_str()) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EGlobalDuplicate,
+                    format!("Duplicate REQUIRE variable '${}'", var.name),
+                    Phase::Validation,
+                    "REQUIRE",
+                    var.line,
+                    var.column,
+                ));
+                continue;
+            }
+
+            match global_types.get(var.name.as_str()).copied() {
+                None => diags.push(Diagnostic::new(
+                    DiagnosticCode::ERequireVariableMissing,
+                    format!(
+                        "REQUIRE variable '${}' is not declared in root INIT",
+                        var.name
+                    ),
+                    Phase::Validation,
+                    "REQUIRE",
+                    var.line,
+                    var.column,
+                )),
+                Some(root_type) if root_type != var.var_type => diags.push(Diagnostic::new(
+                    DiagnosticCode::EVariableTypeMismatch,
+                    format!(
+                        "REQUIRE variable '${}' expects {}, but root INIT declares {}",
+                        var.name,
+                        type_name(var.var_type),
+                        type_name(root_type)
+                    ),
+                    Phase::Validation,
+                    "REQUIRE",
+                    var.line,
+                    var.column,
+                )),
+                Some(_) => {}
+            }
+        }
+
+        let mut seen_actors: HashSet<&str> = HashSet::new();
+        for actor in &req.actors {
+            if !seen_actors.insert(actor.id.as_str()) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EActorDuplicate,
+                    format!("Duplicate REQUIRE actor '{}'", actor.id),
+                    Phase::Validation,
+                    "REQUIRE",
+                    actor.line,
+                    actor.column,
+                ));
+                continue;
+            }
+
+            let Some(available_emotions) = actor_emotions.get(actor.id.as_str()) else {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::ERequireActorMissing,
+                    format!("REQUIRE actor '{}' is not declared in root INIT", actor.id),
+                    Phase::Validation,
+                    "REQUIRE",
+                    actor.line,
+                    actor.column,
+                ));
+                continue;
+            };
+
+            let mut seen_emotions: HashSet<&str> = HashSet::new();
+            for emotion in &actor.emotions {
+                if !seen_emotions.insert(emotion.name.as_str()) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EEmotionDuplicate,
+                        format!(
+                            "Duplicate REQUIRE emotion '{}' for actor '{}'",
+                            emotion.name, actor.id
+                        ),
+                        Phase::Validation,
+                        "REQUIRE",
+                        emotion.line,
+                        emotion.column,
+                    ));
+                    continue;
+                }
+
+                if !available_emotions.contains(emotion.name.as_str()) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ERequireEmotionMissing,
+                        format!(
+                            "REQUIRE emotion '{}' for actor '{}' is not declared in root INIT",
+                            emotion.name, actor.id
+                        ),
+                        Phase::Validation,
+                        "REQUIRE",
+                        emotion.line,
+                        emotion.column,
+                    ));
+                }
+            }
+        }
+    }
+
+    diags.sort();
+    diags
+}
+
 // ---------------------------------------------------------------------------
 // #PREP statement validation
 // ---------------------------------------------------------------------------

@@ -16,7 +16,52 @@ pub struct Script {
 pub struct InitBlock {
     pub variables: Vec<VarDecl>,
     pub actors: Vec<ActorDecl>,
+    pub includes: Vec<IncludeDirective>,
     pub start: StartDirective,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct IncludeDirective {
+    pub path: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChildModule {
+    pub require: RequireBlock,
+    pub scenes: Vec<Scene>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequireBlock {
+    pub variables: Vec<RequireVarDecl>,
+    pub actors: Vec<RequireActorRef>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequireVarDecl {
+    pub name: String,
+    pub var_type: VarType,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequireActorRef {
+    pub id: String,
+    pub emotions: Vec<RequireEmotionRef>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequireEmotionRef {
+    pub name: String,
     pub line: usize,
     pub column: usize,
 }

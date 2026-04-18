@@ -92,6 +92,130 @@ impl Parser {
         Some(Script { init, scenes })
     }
 
+    pub fn parse_child_module(&mut self) -> Option<ChildModule> {
+        let mut require: Option<RequireBlock> = None;
+        let mut scenes = Vec::new();
+
+        while self.peek() != &Token::Eof {
+            match self.peek() {
+                Token::Star => match self.peek_n(1) {
+                    Token::Require => {
+                        if let Some(req) = self.parse_require_block() {
+                            if require.is_some() {
+                                self.diagnostics.push(Diagnostic::new(
+                                    DiagnosticCode::ERequireCount,
+                                    "Child file must contain exactly one * REQUIRE block",
+                                    Phase::Parse,
+                                    "GLOBAL",
+                                    req.line,
+                                    req.column,
+                                ));
+                            } else {
+                                require = Some(req);
+                            }
+                        }
+                    }
+                    Token::Init => {
+                        let (l, c) = self.current_span();
+                        self.diagnostics.push(Diagnostic::new(
+                            DiagnosticCode::EIncludeChildInitForbidden,
+                            "Included child file must not declare * INIT",
+                            Phase::Parse,
+                            "GLOBAL",
+                            l,
+                            c,
+                        ));
+                        self.skip_top_level_block();
+                    }
+                    Token::Ident(_) => {
+                        if let Some(scene) = self.parse_scene() {
+                            scenes.push(scene);
+                        } else {
+                            self.advance();
+                        }
+                    }
+                    _ => {
+                        let (l, c) = self.current_span();
+                        self.diagnostics.push(Diagnostic::new(
+                            DiagnosticCode::ESyntax,
+                            format!(
+                                "Expected '* REQUIRE' or scene label, found * {}",
+                                self.peek_n(1).name()
+                            ),
+                            Phase::Parse,
+                            "GLOBAL",
+                            l,
+                            c,
+                        ));
+                        self.advance();
+                    }
+                },
+                Token::AtInclude => {
+                    let (l, c) = self.current_span();
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::EPhaseTokenForbidden,
+                        "@include is only allowed inside root * INIT",
+                        Phase::Parse,
+                        "GLOBAL",
+                        l,
+                        c,
+                    ));
+                    let _ = self.parse_include_directive("GLOBAL");
+                }
+                Token::AtStart => {
+                    let (l, c) = self.current_span();
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::EPhaseTokenForbidden,
+                        "@start is only allowed inside root * INIT",
+                        Phase::Parse,
+                        "GLOBAL",
+                        l,
+                        c,
+                    ));
+                    self.advance();
+                    if let Token::Ident(_) = self.peek() {
+                        self.advance();
+                    }
+                    self.eat_optional_semicolon();
+                }
+                _ => {
+                    let (l, c) = self.current_span();
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::ESyntax,
+                        format!("Unexpected token {} at top-level", self.peek().name()),
+                        Phase::Parse,
+                        "GLOBAL",
+                        l,
+                        c,
+                    ));
+                    self.advance();
+                }
+            }
+        }
+
+        let require = match require {
+            Some(req) => req,
+            None => {
+                self.diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ERequireCount,
+                    "Included child file must contain exactly one * REQUIRE block",
+                    Phase::Parse,
+                    "GLOBAL",
+                    1,
+                    1,
+                ));
+                RequireBlock {
+                    variables: Vec::new(),
+                    actors: Vec::new(),
+                    line: 1,
+                    column: 1,
+                }
+            }
+        };
+
+        Some(ChildModule { require, scenes })
+    }
+
     // -----------------------------------------------------------------------
     // INIT block
     // -----------------------------------------------------------------------
@@ -110,6 +234,7 @@ impl Parser {
 
         let mut variables = Vec::new();
         let mut actors = Vec::new();
+        let mut includes = Vec::new();
         let mut start: Option<StartDirective> = None;
 
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
@@ -130,11 +255,22 @@ impl Parser {
                     if let Token::Ident(name) = self.peek().clone() {
                         self.advance();
                         self.eat_optional_semicolon();
-                        start = Some(StartDirective {
-                            target: name,
-                            line: sl,
-                            column: sc,
-                        });
+                        if start.is_some() {
+                            self.diagnostics.push(Diagnostic::new(
+                                DiagnosticCode::EStartCount,
+                                "INIT block must contain exactly one @start directive",
+                                Phase::Parse,
+                                "INIT",
+                                sl,
+                                sc,
+                            ));
+                        } else {
+                            start = Some(StartDirective {
+                                target: name,
+                                line: sl,
+                                column: sc,
+                            });
+                        }
                     } else {
                         self.diagnostics.push(Diagnostic::new(
                             DiagnosticCode::ESyntax,
@@ -145,6 +281,9 @@ impl Parser {
                             sc,
                         ));
                     }
+                }
+                Token::AtInclude => {
+                    includes.extend(self.parse_include_directive("INIT"));
                 }
                 _ => {
                     let (l, c) = self.current_span();
@@ -185,10 +324,239 @@ impl Parser {
         Some(InitBlock {
             variables,
             actors,
+            includes,
             start,
             line,
             column,
         })
+    }
+
+    fn parse_include_directive(&mut self, scene: &str) -> Vec<IncludeDirective> {
+        self.advance(); // @include
+
+        if !self.expect(&Token::LBracket) {
+            return Vec::new();
+        }
+
+        let mut includes = Vec::new();
+
+        if self.peek() != &Token::RBracket {
+            loop {
+                let (pl, pc) = self.current_span();
+                if let Token::StringLit(path) = self.peek().clone() {
+                    self.advance();
+                    includes.push(IncludeDirective {
+                        path,
+                        line: pl,
+                        column: pc,
+                    });
+                } else {
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::ESyntax,
+                        "Expected string path inside @include manifest",
+                        Phase::Parse,
+                        scene,
+                        pl,
+                        pc,
+                    ));
+                    break;
+                }
+
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+        }
+
+        self.expect(&Token::RBracket);
+        self.eat_optional_semicolon();
+        includes
+    }
+
+    fn parse_require_block(&mut self) -> Option<RequireBlock> {
+        let (line, column) = self.current_span();
+
+        if !self.expect(&Token::Star) {
+            return None;
+        }
+        if !self.expect(&Token::Require) {
+            return None;
+        }
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let mut variables = Vec::new();
+        let mut actors = Vec::new();
+
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            match self.peek() {
+                Token::Dollar => {
+                    if let Some(var) = self.parse_require_var_decl() {
+                        variables.push(var);
+                    }
+                }
+                Token::AtActor => {
+                    if let Some(actor) = self.parse_require_actor_ref() {
+                        actors.push(actor);
+                    }
+                }
+                _ => {
+                    let (l, c) = self.current_span();
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::ESyntax,
+                        format!("Unexpected token {} in REQUIRE block", self.peek().name()),
+                        Phase::Parse,
+                        "REQUIRE",
+                        l,
+                        c,
+                    ));
+                    self.advance();
+                }
+            }
+        }
+
+        self.expect(&Token::RBrace);
+
+        Some(RequireBlock {
+            variables,
+            actors,
+            line,
+            column,
+        })
+    }
+
+    fn parse_require_var_decl(&mut self) -> Option<RequireVarDecl> {
+        let (line, column) = self.current_span();
+        self.advance(); // $
+
+        let name = if let Token::Ident(name) = self.peek().clone() {
+            self.advance();
+            name
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "Expected variable name after '$' in REQUIRE",
+                Phase::Parse,
+                "REQUIRE",
+                line,
+                column,
+            ));
+            return None;
+        };
+
+        if !self.expect(&Token::As) {
+            return None;
+        }
+
+        let var_type = self.parse_var_type("REQUIRE")?;
+
+        if self.peek() == &Token::Eq {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "REQUIRE variable declaration must not have initializer",
+                Phase::Parse,
+                "REQUIRE",
+                line,
+                column,
+            ));
+            self.advance();
+            let _ = self.parse_expression();
+        }
+
+        self.eat_optional_semicolon();
+
+        Some(RequireVarDecl {
+            name,
+            var_type,
+            line,
+            column,
+        })
+    }
+
+    fn parse_require_actor_ref(&mut self) -> Option<RequireActorRef> {
+        let (line, column) = self.current_span();
+        self.advance(); // @actor
+
+        let id = if let Token::Ident(id) = self.peek().clone() {
+            self.advance();
+            id
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "Expected actor ID after @actor in REQUIRE",
+                Phase::Parse,
+                "REQUIRE",
+                line,
+                column,
+            ));
+            return None;
+        };
+
+        if !self.expect(&Token::LBracket) {
+            return None;
+        }
+
+        let mut emotions = Vec::new();
+        while self.peek() != &Token::RBracket && self.peek() != &Token::Eof {
+            let (el, ec) = self.current_span();
+            if let Token::Ident(name) = self.peek().clone() {
+                self.advance();
+                emotions.push(RequireEmotionRef {
+                    name,
+                    line: el,
+                    column: ec,
+                });
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                }
+            } else {
+                self.diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ESyntax,
+                    "Expected emotion key inside REQUIRE actor array",
+                    Phase::Parse,
+                    "REQUIRE",
+                    el,
+                    ec,
+                ));
+                self.advance();
+            }
+        }
+
+        self.expect(&Token::RBracket);
+        self.eat_optional_semicolon();
+
+        Some(RequireActorRef {
+            id,
+            emotions,
+            line,
+            column,
+        })
+    }
+
+    fn skip_top_level_block(&mut self) {
+        if self.peek() == &Token::Star {
+            self.advance();
+        }
+
+        if !matches!(self.peek(), Token::LBrace) {
+            self.advance();
+        }
+
+        if self.peek() == &Token::LBrace {
+            self.advance();
+            let mut depth = 1usize;
+            while self.peek() != &Token::Eof && depth > 0 {
+                match self.peek() {
+                    Token::LBrace => depth += 1,
+                    Token::RBrace => depth -= 1,
+                    _ => {}
+                }
+                self.advance();
+            }
+        }
     }
 
     fn parse_var_decl(&mut self) -> Option<VarDecl> {

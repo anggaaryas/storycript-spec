@@ -167,6 +167,7 @@ impl Lexer {
         }
         match s.as_str() {
             "INIT" => Token::Init,
+            "REQUIRE" => Token::Require,
             "if" => Token::If,
             "else" => Token::Else,
             "as" => Token::As,
@@ -200,6 +201,7 @@ impl Lexer {
             "jump" => Token::AtJump,
             "end" => Token::AtEnd,
             "start" => Token::AtStart,
+            "include" => Token::AtInclude,
             _ => {
                 self.diagnostics.push(Diagnostic::new(
                     DiagnosticCode::ESyntax,

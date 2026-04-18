@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod compiler;
 pub mod diagnostic;
 pub mod interpolation;
 pub mod lexer;

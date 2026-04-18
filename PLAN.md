@@ -8,6 +8,7 @@ Before any scenes are parsed, the engine must define global variables, load acto
 * Must be the absolute first block evaluated by the compiler.
 * Handles global variable declaration (`$`) with explicit type annotation.
 * Handles character registration (`@actor`) using block-based dictionary syntax.
+* Optional child include manifest via `@include ["path/to/file.StoryScript", ...]`.
 * **Mandatory:** Must contain exactly one `@start` directive pointing to the first scene.
 
 **Typed Variable Declaration:**
@@ -42,6 +43,41 @@ Before any scenes are parsed, the engine must define global variables, load acto
     @start server_core_hub;
 }
 ```
+
+### Child Modules and Atomic Include
+
+StoryScript supports compile-time child modules to split large narratives safely.
+
+**Root manifest syntax (INIT only):**
+
+```plaintext
+* INIT {
+        @include [
+                "modules/minigame_hack.StoryScript",
+                "chapters/chapter_1.StoryScript"
+        ];
+}
+```
+
+**Child contract syntax (required in every included file):**
+
+```plaintext
+* REQUIRE {
+    $system_stability as integer;
+    $has_admin_key as boolean;
+    @actor TEO [ focus ];
+    @actor GIP [ alert ];
+}
+```
+
+Child include semantics:
+* `@include` is valid only inside root `* INIT`.
+* Include paths are resolved relative to the root file path.
+* Duplicate include path strings in one manifest are compile-time invalid.
+* Included child files must contain exactly one `* REQUIRE` block.
+* Included child files must not contain `* INIT`.
+* Child files must not declare `@start`; root `* INIT` is the only entrypoint owner.
+* Child scenes are merged after root parsing and then validated with normal scene/link/type rules.
 
 ---
 
@@ -239,6 +275,16 @@ The compiler must fail the script when any of the following is true:
 * The script contains zero or multiple `* INIT` blocks.
 * `* INIT` is not the first top-level block.
 * `* INIT` contains zero or multiple `@start` directives.
+* Any `@include` appears outside root `* INIT`.
+* Any include path listed in root `@include` cannot be resolved/read.
+* Any include path string is duplicated in one `@include` manifest.
+* Any included child file contains `* INIT`.
+* Any included child file does not contain exactly one `* REQUIRE` block.
+* Any child `* REQUIRE` variable is missing in root `* INIT`.
+* Any child `* REQUIRE` variable type does not match the root declaration type.
+* Any child `* REQUIRE` declaration includes initializer value (`=` expression).
+* Any child `* REQUIRE` actor ID is missing in root `* INIT`.
+* Any child `* REQUIRE` emotion key is missing in the referenced root actor portrait map.
 * Duplicate scene labels exist.
 * Duplicate actor IDs exist.
 * Duplicate emotion keys exist inside an actor portrait map.
@@ -288,6 +334,13 @@ Diagnostic code naming:
 | `E_INIT_COUNT` | The script contains zero or multiple `* INIT` blocks. |
 | `E_INIT_ORDER` | `* INIT` is not the first top-level block. |
 | `E_START_COUNT` | `* INIT` contains zero or multiple `@start` directives. |
+| `E_INCLUDE_FILE_NOT_FOUND` | Include path in `@include` cannot be resolved/read. |
+| `E_INCLUDE_DUPLICATE_PATH` | Duplicate include path strings are declared in one `@include` manifest. |
+| `E_INCLUDE_CHILD_INIT_FORBIDDEN` | Included child file contains `* INIT`. |
+| `E_REQUIRE_COUNT` | Included child file does not contain exactly one `* REQUIRE` block. |
+| `E_REQUIRE_VARIABLE_MISSING` | Child `* REQUIRE` variable does not exist in root `* INIT`. |
+| `E_REQUIRE_ACTOR_MISSING` | Child `* REQUIRE` actor ID does not exist in root `* INIT`. |
+| `E_REQUIRE_EMOTION_MISSING` | Child `* REQUIRE` emotion key does not exist in root actor portrait map. |
 | `E_SCENE_DUPLICATE` | Duplicate scene labels exist. |
 | `E_ACTOR_DUPLICATE` | Duplicate actor IDs exist. |
 | `E_EMOTION_DUPLICATE` | Duplicate emotion keys exist inside one actor portrait map. |
@@ -334,6 +387,18 @@ Diagnostic code naming:
 | `F001` | `else if` branch does not match `else if (<expr>) { ... }` token shape. | `E_SYNTAX` | Malformed branch chain is a parser-level syntax failure. |
 | `F002` | Any `else if` condition expression is non-boolean. | `E_CONDITION_TYPE_INVALID` | Branch conditions require explicit boolean typing. |
 | `F003` | A reachable `#STORY` path through an `if`/`else if` chain can fall through without `@choice`, `@jump`, or `@end`. | `E_STORY_UNTERMINATED_PATH` | Existing story termination invariant applies to every reachable branch arm. |
+
+#### Include/REQUIRE Diagnostic Mapping
+| Rule ID | Validation Condition | Diagnostic Code | Rationale |
+| :--- | :--- | :--- | :--- |
+| `INC001` | Include path cannot be read from root `@include` manifest. | `E_INCLUDE_FILE_NOT_FOUND` | Child module cannot be compiled if source file is unavailable. |
+| `INC002` | Same include path string appears more than once in one manifest. | `E_INCLUDE_DUPLICATE_PATH` | Prevents accidental double-merge of child scenes. |
+| `INC003` | Included child file declares `* INIT`. | `E_INCLUDE_CHILD_INIT_FORBIDDEN` | Root-only bootstrap ownership keeps global state deterministic. |
+| `INC004` | Included child file has zero or multiple `* REQUIRE` blocks. | `E_REQUIRE_COUNT` | Child contract cardinality must be exactly one. |
+| `INC005` | Child REQUIRE variable is absent in root INIT. | `E_REQUIRE_VARIABLE_MISSING` | Child variable dependency must be declared by root bootstrap. |
+| `INC006` | Child REQUIRE actor ID is absent in root INIT. | `E_REQUIRE_ACTOR_MISSING` | Child dialogue/render dependency must exist before execution. |
+| `INC007` | Child REQUIRE emotion key is absent in root actor portrait map. | `E_REQUIRE_EMOTION_MISSING` | Child portrait-form dialogue dependency must be guaranteed at compile-time. |
+| `INC008` | Child REQUIRE declaration includes initializer value. | `E_SYNTAX` | REQUIRE blocks describe dependency contracts, not runtime initialization. |
 
 #### Compile-Time Warnings
 | Code | Trigger |

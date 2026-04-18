@@ -36,28 +36,7 @@ If any required input is missing, stop and ask for it before drafting changes.
 5. Add or update a representative example .StoryScript file.
 6. Run completion checks and publish the feature bundle.
 
-## Step 1: Define Scope Contract (No Ambiguity)
-Plan a scope contract with all fields below. Do not continue until all fields are explicit. Save to your notes or a temporary document.
-
-```markdown
-### Feature Scope Contract
-- In Scope:
-- Out of Scope:
-- Affected Phases: INIT | PREP | STORY | Runtime
-- New Syntax (exact grammar/signature):
-- Type Rules:
-- Control Flow Impact:
-- Backward Compatibility:
-- Migration Notes (if any):
-```
-
-Scope rules:
-- "In Scope" and "Out of Scope" must each contain at least 2 concrete bullets.
-- "New Syntax" must include exact token-level shape, not paraphrases.
-- "Type Rules" must state accepted types, rejected types, and coercion rules.
-- "Control Flow Impact" must state whether termination analysis changes.
-
-## Step 2: Draft Semantics and Syntax
+## Step 1: Draft Semantics and Syntax
 Update the feature section in [PLAN.md](../../../PLAN.md) with:
 - Syntax form.
 - Execution semantics.
@@ -68,7 +47,7 @@ Decision points:
 - If the feature changes parser shape, include grammar-level examples.
 - If the feature changes runtime only, still define compile-time rejection boundaries.
 
-## Step 3: Add Compile-Time Validation Rules (Mandatory)
+## Step 2: Add Compile-Time Validation Rules (Mandatory)
 For every feature, add explicit validation bullets under compile-time rules in [PLAN.md](../../../PLAN.md).
 
 Validation rule requirements:
@@ -79,7 +58,7 @@ Validation rule requirements:
 Validation format:
 - "Any <condition> must fail compile-time validation with <diagnostic code>."
 
-## Step 4: Standard Diagnostic Code Mapping (Mandatory)
+## Step 3: Standard Diagnostic Code Mapping (Mandatory)
 Map each new or affected validation rule to a stable diagnostic code.
 
 Standardization policy:
@@ -99,7 +78,7 @@ Required mapping table in the feature write-up:
 |---|---|---|---|
 | F001 | ... | E_... | ... |
 
-## Step 5: Add Example .StoryScript File (Mandatory)
+## Step 4: Add Example .StoryScript File (Mandatory)
 Create or update at least one example file under [example](../../../example/) that demonstrates:
 - Valid usage path.
 - Invalid usage notes (as comments or companion negative sample).
@@ -114,7 +93,7 @@ Minimum example coverage:
 - 1 boundary condition.
 - 1 failure case description tied to a diagnostic code.
 
-## Step 6: Completion Checks (Definition of Done)
+## Step 5: Completion Checks (Definition of Done)
 A feature update is complete only if all checks pass:
 - Scope contract is fully filled with no TBD fields.
 - PLAN semantics are explicit and phase-bounded.

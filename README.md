@@ -64,6 +64,7 @@ If no file is passed, the player scans for `.StoryScript` files in the current d
 StoryScript uses:
 
 - `* INIT` for global state, actors, and `@start`
+- Root-only child manifest via `@include [ ... ]` inside `* INIT`
 - `#PREP` for state mutation and engine directives (`@bg`, `@bgm`, `@sfx`)
 - `#STORY` for narration, dialogue, branching (`if` / `else if` / `else`), transitions, and standalone variable output (`$var`)
 - Numeric expressions with `+`, `-`, `*`, `/`, `%` (modulo is integer-only)
@@ -79,6 +80,13 @@ Local scope notes:
 - Locals are visible in both `#PREP` and `#STORY` of the same scene
 - Locals are reset every time that scene is entered/re-entered
 - Local names cannot collide with globals declared in `* INIT`
+
+Module include notes:
+
+- Only root `* INIT` can use `@include [ ... ]`
+- Included child files must not define `* INIT`
+- Included child files must define exactly one `* REQUIRE { ... }`
+- Include paths are resolved relative to the root script file
 
 Built-in notes:
 
@@ -118,6 +126,45 @@ Minimal example:
 ```
 
 For full syntax and validation rules, see `PLAN.md`.
+
+Minimal modular include example:
+
+```StoryScript
+// main.StoryScript
+* INIT {
+	$system_stability as integer = 100
+	$has_admin_key as boolean = true
+
+	@actor TEO "Teona" {
+		focus -> "teo_focus.png"
+	}
+	@actor GIP "Gippie" {
+		alert -> "gip_alert.png"
+	}
+
+	@include ["modules/minigame_hack.StoryScript"];
+	@start hack_sequence_start;
+}
+```
+
+```StoryScript
+// modules/minigame_hack.StoryScript
+* REQUIRE {
+	$system_stability as integer;
+	$has_admin_key as boolean;
+	@actor TEO [ focus ];
+	@actor GIP [ alert ];
+}
+
+* hack_sequence_start {
+	#PREP
+	$system_stability = $system_stability - 15
+
+	#STORY
+	GIP(alert, Center): "Warning! Countermeasures active."
+	@end;
+}
+```
 
 ## VS Code Extension
 

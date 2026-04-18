@@ -1,0 +1,35 @@
+// ---------------------------------------------------------------------------
+// Feature: Root Include + Child REQUIRE Contract
+// Focus: Root-only @include manifest and root-owned @start.
+// Coverage: Happy path for include + contract-compatible child module.
+// ---------------------------------------------------------------------------
+
+* INIT {
+    $system_stability as integer = 100
+    $has_admin_key as boolean = true
+
+    @actor TEO "Teona" {
+        focus -> "teo_focus.png"
+    }
+
+    @actor GIP "Gippie" {
+        alert -> "gip_alert.png"
+    }
+
+    @include [
+        "feature_include_child_module.StoryScript"
+    ];
+
+    @start root_bridge
+}
+
+* root_bridge {
+    #STORY
+    "Root boot complete. Dispatching child module scene graph..."
+    @jump hack_sequence_start
+}
+
+// Failure case notes:
+// - F001: @include outside INIT -> E_PHASE_TOKEN_FORBIDDEN
+// - F002: duplicate include path string in one manifest -> E_INCLUDE_DUPLICATE_PATH
+// - F003: include path read failure -> E_INCLUDE_FILE_NOT_FOUND
