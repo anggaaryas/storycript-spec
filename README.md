@@ -67,6 +67,8 @@ StoryScript uses:
 - Root-only child manifest via `@include [ ... ]` inside `* INIT`
 - `#PREP` for state mutation and engine directives (`@bg`, `@bgm`, `@sfx`)
 - `#STORY` for narration, dialogue, branching (`if` / `else if` / `else`), transitions, and standalone variable output (`$var`)
+- Snapshot `for` and `repeat` loops in both `#PREP` and `#STORY`, with `break`/`continue` nearest-loop behavior
+- Nested `@choice` entry groups using `if`, `repeat`, and `for ($item in snapshot $array)` (runtime-expanded choice cap: 9 options)
 - Numeric expressions with `+`, `-`, `*`, `/`, `%` (modulo is integer-only)
 - Built-ins: `abs(x)`, `rand()`, `rand(min, max)`, `pick(array)`, `pick(count, array)`, `array_push`, `array_pop`, `array_strip`, `array_clear`, `array_contains`, `array_size`, `array_join`, `array_get`, `array_insert`, `array_remove`
 - `${var}` inline interpolation in string literals across all phases (`\$` for literal dollar)

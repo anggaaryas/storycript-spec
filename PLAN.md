@@ -230,6 +230,40 @@ if ($system_stability <= 30) {
 }
 ```
 
+### Loop Syntax
+StoryScript supports explicit loop constructs in both `#PREP` and `#STORY`:
+
+```plaintext
+for ($item in snapshot $array) {
+    ...
+}
+
+repeat (count) {
+    ...
+}
+```
+
+Loop control statements are also supported inside loop bodies:
+
+```plaintext
+break;
+continue;
+```
+
+Loop semantics:
+* `for ($item in snapshot $array)` iterates a snapshot copy of `$array` captured at loop entry.
+* Mutating `$array` inside the loop body does not change the current iteration sequence.
+* `$item` is an implicit loop-local variable scoped to the loop body.
+* `$item` is read-only and assignment to `$item` is compile-time invalid.
+* `repeat(count)` accepts only integer literal or `$integer_variable` count source.
+* `repeat(count)` requires `count > 0`.
+* `break` and `continue` are valid only inside loop bodies and always target the nearest loop.
+* Inside `@choice`, loop entries support nested `if`, `repeat`, and snapshot `for` groups in any combination.
+
+Explicitly not supported:
+* General `for` loop forms (index-init/condition/step syntax).
+* Labeled `break`/`continue`.
+
 ### Variable Read Output & Interpolation
 
 StoryScript supports two read-only variable rendering forms:
@@ -288,6 +322,9 @@ These directives handle transitioning out of the current scene and must be the f
 Halts the engine and renders a user-selectable menu. Options map to the next scene via `->`. Supports nested conditionals.
 
 If all options are filtered out after conditional evaluation, the engine raises a runtime error (`ChoiceExhausted`) and stops execution.
+
+Nested `if`, `repeat`, and `for ($item in snapshot $array)` entry groups are valid inside `@choice` and are expanded in source order at runtime.
+If expansion produces more than 9 options, runtime fails with `R_CHOICE_OPTION_CAP_EXCEEDED`.
 
 ```plaintext
 @choice {
@@ -371,6 +408,14 @@ The compiler must fail the script when any of the following is true:
 * Any `pick()` call has wrong arity, invalid argument shape/type, or empty one-argument literal.
 * Any condition expression (`if`, `else if`, `@choice if`) is not boolean.
 * Any `else if` branch that does not follow `else if (<expr>) { ... }` syntax.
+* Any `for` header that is not exactly `for ($item in snapshot $array) { ... }`.
+* Any `for` snapshot source variable that is undeclared or not an array variable.
+* Any `for` iterator variable name that collides with an existing global/local scene variable.
+* Any assignment targeting a loop iterator variable.
+* Any `@choice` expansion that produces more than 9 options at runtime.
+* Any `repeat(count)` count source that is not integer literal or `$integer_variable`.
+* Any `repeat(count)` integer literal where `count <= 0`.
+* Any `break` or `continue` statement used outside a loop body.
 * Any interpolation placeholder is malformed (for example: `${`, `${}`, `${1bad}`, `${name`).
 * Any constant-folded `@choice` block is provably empty at compile time.
 * Any reachable `#STORY` path can complete without executing `@choice`, `@jump`, or `@end`.
@@ -427,6 +472,8 @@ Diagnostic code naming:
 | `E_CONDITION_TYPE_INVALID` | Condition expression does not evaluate to boolean. |
 | `E_CHOICE_STATIC_EMPTY` | `@choice` is provably empty after compile-time constant folding. |
 | `E_STORY_UNTERMINATED_PATH` | A reachable `#STORY` path can fall through without `@choice`, `@jump`, or `@end`. |
+| `E_LOOP_CONTROL_OUTSIDE_LOOP` | `break`/`continue` is used outside a loop body. |
+| `E_LOOP_ITERATOR_READ_ONLY` | Assignment targets a read-only loop iterator variable. |
 
 #### Scene-Local Variable Diagnostic Mapping
 | Rule ID | Validation Condition | Diagnostic Code | Rationale |
@@ -443,6 +490,21 @@ Diagnostic code naming:
 | `F001` | `else if` branch does not match `else if (<expr>) { ... }` token shape. | `E_SYNTAX` | Malformed branch chain is a parser-level syntax failure. |
 | `F002` | Any `else if` condition expression is non-boolean. | `E_CONDITION_TYPE_INVALID` | Branch conditions require explicit boolean typing. |
 | `F003` | A reachable `#STORY` path through an `if`/`else if` chain can fall through without `@choice`, `@jump`, or `@end`. | `E_STORY_UNTERMINATED_PATH` | Existing story termination invariant applies to every reachable branch arm. |
+
+#### Loop Diagnostic Mapping
+| Rule ID | Validation Condition | Diagnostic Code | Rationale |
+| :--- | :--- | :--- | :--- |
+| `LOOP001` | `for` header does not match `for ($item in snapshot $array) { ... }`. | `E_SYNTAX` | Loop syntax contract is explicit and parser-enforced. |
+| `LOOP002` | `for` snapshot source is undeclared in current scope. | `E_VARIABLE_UNDECLARED_READ` | Snapshot source is a variable read operation. |
+| `LOOP003` | `for` snapshot source is declared but not an array variable. | `E_FUNCTION_ARGUMENT_INVALID` | Snapshot iterable contract requires array variable source. |
+| `LOOP004` | Loop iterator name collides with an existing global or scene-local variable. | `E_VARIABLE_SCOPE_CONFLICT` or `E_LOCAL_DUPLICATE` | Reuses existing scope and duplicate-name diagnostics. |
+| `LOOP005` | Assignment targets loop iterator variable. | `E_LOOP_ITERATOR_READ_ONLY` | Iterator is body-scoped read-only binding. |
+| `LOOP006` | `repeat(count)` source is not integer literal or `$integer_variable`. | `E_SYNTAX` or `E_FUNCTION_ARGUMENT_INVALID` | Parser enforces source shape and validator enforces integer variable type. |
+| `LOOP007` | `repeat(count)` literal is `<= 0`. | `E_RANGE_INVALID` | Literal count validity is deterministically provable at compile-time. |
+| `LOOP008` | `break`/`continue` appears outside loop body. | `E_LOOP_CONTROL_OUTSIDE_LOOP` | Loop control statements are nearest-loop scoped only. |
+| `LOOP009` | Runtime repeat count from variable evaluates to `<= 0`. | `R_REPEAT_COUNT_INVALID` | Variable-driven count validity is runtime-dependent. |
+| `LOOP010` | Runtime STORY loop emits invalid terminal behavior (zero terminal on exit or multiple terminal triggers). | `R_STORY_LOOP_TERMINATION_INVALID` | Deferred STORY loop termination constraints are enforced at runtime. |
+| `LOOP011` | Runtime `@choice` expansion emits more than 9 options after nested entry expansion. | `R_CHOICE_OPTION_CAP_EXCEEDED` | Player choice input is bounded to 1-9; oversized menus must fail deterministically. |
 
 #### Include/REQUIRE Diagnostic Mapping
 | Rule ID | Validation Condition | Diagnostic Code | Rationale |
@@ -491,6 +553,9 @@ Diagnostic code naming:
 | `R_ARRAY_EMPTY` | Array operation requires at least one element but array is empty at runtime. |
 | `R_ARRAY_INDEX_OUT_OF_RANGE` | Array index operation used index outside valid bounds at runtime. |
 | `R_ARRAY_SAMPLE_COUNT_INVALID` | `pick(count, array)` requested count is negative or larger than array size at runtime. |
+| `R_REPEAT_COUNT_INVALID` | `repeat(count)` evaluated runtime count is `<= 0`. |
+| `R_STORY_LOOP_TERMINATION_INVALID` | Deferred STORY loop termination constraints were violated at runtime. |
+| `R_CHOICE_OPTION_CAP_EXCEEDED` | `@choice` nested entry expansion produced more than 9 options at runtime. |
 
 Backward compatibility:
 * `ChoiceExhausted` is retained as a legacy alias for `R_CHOICE_EXHAUSTED`.
@@ -532,7 +597,9 @@ The compiler must perform static control-flow analysis on each `#STORY` block.
 * If a condition cannot be proven constant at compile time, both branches are treated as reachable.
 * In `if`/`else if` chains, each non-constant arm is treated as reachable unless pruned by constant folding.
 * A path is considered terminated only when its final executable statement is `@choice`, `@jump`, or `@end`.
+* If the final executable statement is `for (...)` or `repeat(...)`, compile-time termination may be deferred to runtime.
 * If any reachable path can fall through to the end of `#STORY` without a transition, compilation fails.
+* Deferred loop termination checks at runtime must raise `R_STORY_LOOP_TERMINATION_INVALID` when a loop exits without terminal emission or would trigger terminal directives multiple times.
 * Branches proven unreachable by constant folding do not need to terminate.
 
 ### Statement Terminators

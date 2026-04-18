@@ -157,12 +157,15 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
 
         // Validate #PREP
         if let Some(prep) = &scene.prep {
+            let mut readonly_vars: HashSet<String> = HashSet::new();
             validate_prep_statements(
                 &prep.statements,
                 &declared_vars,
                 &mut scoped_vars,
                 &mut local_vars,
                 &scene.label,
+                0,
+                &mut readonly_vars,
                 &mut diags,
             );
         }
@@ -174,6 +177,7 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
             &actor_map,
             &scene_labels,
             &scene.label,
+            0,
             &mut diags,
         );
 
@@ -331,6 +335,8 @@ fn validate_prep_statements(
     scoped_vars: &mut VarTypes,
     local_vars: &mut HashSet<String>,
     scene: &str,
+    loop_depth: usize,
+    readonly_vars: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
@@ -397,6 +403,21 @@ fn validate_prep_statements(
                 scoped_vars.insert(decl.name.clone(), decl.var_type);
             }
             PrepStatement::VarAssign(assign) => {
+                if readonly_vars.contains(&assign.name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ELoopIteratorReadOnly,
+                        format!(
+                            "Loop iterator '${}' is read-only and cannot be assigned",
+                            assign.name
+                        ),
+                        Phase::Validation,
+                        scene,
+                        assign.line,
+                        assign.column,
+                    ));
+                    continue;
+                }
+
                 let declared_type = scoped_vars.get(&assign.name).copied();
                 if declared_type.is_none() {
                     diags.push(Diagnostic::new(
@@ -540,6 +561,8 @@ fn validate_prep_statements(
                     scoped_vars,
                     local_vars,
                     scene,
+                    loop_depth,
+                    readonly_vars,
                     diags,
                 );
                 if let Some(else_branch) = &if_else.else_branch {
@@ -549,8 +572,127 @@ fn validate_prep_statements(
                         scoped_vars,
                         local_vars,
                         scene,
+                        loop_depth,
+                        readonly_vars,
                         diags,
                     );
+                }
+            }
+            PrepStatement::ForSnapshot(loop_stmt) => {
+                let mut can_enter_body = true;
+
+                if global_vars.contains_key(&loop_stmt.item_name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EVariableScopeConflict,
+                        format!(
+                            "Loop iterator '${}' conflicts with global variable of the same name",
+                            loop_stmt.item_name
+                        ),
+                        Phase::Validation,
+                        scene,
+                        loop_stmt.line,
+                        loop_stmt.column,
+                    ));
+                    can_enter_body = false;
+                } else if local_vars.contains(&loop_stmt.item_name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ELocalDuplicate,
+                        format!(
+                            "Loop iterator '${}' conflicts with existing local variable in scene '{}'",
+                            loop_stmt.item_name, scene
+                        ),
+                        Phase::Validation,
+                        scene,
+                        loop_stmt.line,
+                        loop_stmt.column,
+                    ));
+                    can_enter_body = false;
+                }
+
+                let iterator_type = match scoped_vars.get(&loop_stmt.array_name).copied() {
+                    Some(array_type) => match array_element_type(array_type) {
+                        Some(element_type) => Some(element_type),
+                        None => {
+                            diags.push(Diagnostic::new(
+                                DiagnosticCode::EFunctionArgumentInvalid,
+                                format!(
+                                    "for (...) snapshot source '${}' must be an array variable",
+                                    loop_stmt.array_name
+                                ),
+                                Phase::Validation,
+                                scene,
+                                loop_stmt.line,
+                                loop_stmt.column,
+                            ));
+                            None
+                        }
+                    },
+                    None => {
+                        diags.push(Diagnostic::new(
+                            DiagnosticCode::EVariableUndeclaredRead,
+                            format!(
+                                "Read of undeclared variable '${}' in for snapshot source",
+                                loop_stmt.array_name
+                            ),
+                            Phase::Validation,
+                            scene,
+                            loop_stmt.line,
+                            loop_stmt.column,
+                        ));
+                        None
+                    }
+                };
+
+                let mut inserted_iterator = false;
+                if can_enter_body {
+                    if let Some(element_type) = iterator_type {
+                        scoped_vars.insert(loop_stmt.item_name.clone(), element_type);
+                        local_vars.insert(loop_stmt.item_name.clone());
+                        readonly_vars.insert(loop_stmt.item_name.clone());
+                        inserted_iterator = true;
+                    }
+                }
+
+                validate_prep_statements(
+                    &loop_stmt.body,
+                    global_vars,
+                    scoped_vars,
+                    local_vars,
+                    scene,
+                    loop_depth + 1,
+                    readonly_vars,
+                    diags,
+                );
+
+                if inserted_iterator {
+                    scoped_vars.remove(&loop_stmt.item_name);
+                    local_vars.remove(&loop_stmt.item_name);
+                    readonly_vars.remove(&loop_stmt.item_name);
+                }
+            }
+            PrepStatement::Repeat(repeat_stmt) => {
+                validate_repeat_count(&repeat_stmt.count, scoped_vars, scene, diags);
+                validate_prep_statements(
+                    &repeat_stmt.body,
+                    global_vars,
+                    scoped_vars,
+                    local_vars,
+                    scene,
+                    loop_depth + 1,
+                    readonly_vars,
+                    diags,
+                );
+            }
+            PrepStatement::Break { line, column } | PrepStatement::Continue { line, column } => {
+                if loop_depth == 0 {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ELoopControlOutsideLoop,
+                        "break/continue is only valid inside loop bodies",
+                        Phase::Validation,
+                        scene,
+                        *line,
+                        *column,
+                    ));
                 }
             }
             PrepStatement::Call {
@@ -601,6 +743,7 @@ fn validate_story_statements(
     actor_map: &HashMap<String, &ActorDecl>,
     scene_labels: &HashSet<String>,
     scene: &str,
+    loop_depth: usize,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
@@ -675,77 +818,15 @@ fn validate_story_statements(
                 }
             }
             StoryStatement::Choice(choice) => {
-                let mut all_conditional = true;
-                let mut provably_empty = true;
+                let availability = validate_choice_entries(
+                    &choice.entries,
+                    declared_vars,
+                    scene_labels,
+                    scene,
+                    diags,
+                );
 
-                for opt in &choice.options {
-                    if !scene_labels.contains(&opt.target) {
-                        diags.push(Diagnostic::new(
-                            DiagnosticCode::EChoiceTargetMissing,
-                            format!(
-                                "@choice target '{}' does not match any scene label",
-                                opt.target
-                            ),
-                            Phase::Validation,
-                            scene,
-                            opt.line,
-                            opt.column,
-                        ));
-                    }
-
-                    validate_interpolated_string(
-                        &opt.text,
-                        opt.line,
-                        opt.column,
-                        declared_vars,
-                        scene,
-                        diags,
-                    );
-
-                    if opt.condition.is_none() {
-                        all_conditional = false;
-                        provably_empty = false;
-                    } else {
-                        let cond_expr = opt.condition.as_ref().expect("checked is_some");
-                        let cond_ty = infer_expr_type(
-                            cond_expr,
-                            opt.line,
-                            opt.column,
-                            None,
-                            false,
-                            declared_vars,
-                            scene,
-                            diags,
-                        );
-                        if let Some(ty) = cond_ty {
-                            if ty != VarType::Boolean {
-                                diags.push(Diagnostic::new(
-                                    DiagnosticCode::EConditionTypeInvalid,
-                                    format!(
-                                        "@choice condition must be boolean, found {}",
-                                        type_name(ty)
-                                    ),
-                                    Phase::Validation,
-                                    scene,
-                                    opt.line,
-                                    opt.column,
-                                ));
-                            }
-                        }
-
-                        // Check if condition is provably false at compile time
-                        if let Some(val) = try_const_eval_bool(cond_expr) {
-                            if val {
-                                provably_empty = false;
-                            }
-                            // if false, this option is dead — still provably empty unless another option is alive
-                        } else {
-                            provably_empty = false;
-                        }
-                    }
-                }
-
-                if choice.options.is_empty() || provably_empty {
+                if !availability.can_produce {
                     diags.push(Diagnostic::new(
                         DiagnosticCode::EChoiceStaticEmpty,
                         "@choice block is provably empty at compile time",
@@ -754,7 +835,7 @@ fn validate_story_statements(
                         choice.line,
                         choice.column,
                     ));
-                } else if all_conditional {
+                } else if !availability.guaranteed_non_empty {
                     diags.push(Diagnostic::new(
                         DiagnosticCode::WChoicePossiblyEmpty,
                         "@choice block may evaluate to no options at runtime",
@@ -795,6 +876,7 @@ fn validate_story_statements(
                     actor_map,
                     scene_labels,
                     scene,
+                    loop_depth,
                     diags,
                 );
                 if let Some(else_branch) = &if_else.else_branch {
@@ -804,8 +886,98 @@ fn validate_story_statements(
                         actor_map,
                         scene_labels,
                         scene,
+                        loop_depth,
                         diags,
                     );
+                }
+            }
+            StoryStatement::ForSnapshot(loop_stmt) => {
+                if declared_vars.contains_key(&loop_stmt.item_name) {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EVariableScopeConflict,
+                        format!(
+                            "Loop iterator '${}' conflicts with an existing variable in scene scope",
+                            loop_stmt.item_name
+                        ),
+                        Phase::Validation,
+                        scene,
+                        loop_stmt.line,
+                        loop_stmt.column,
+                    ));
+                }
+
+                let iterator_type = match declared_vars.get(&loop_stmt.array_name).copied() {
+                    Some(array_type) => match array_element_type(array_type) {
+                        Some(element_type) => Some(element_type),
+                        None => {
+                            diags.push(Diagnostic::new(
+                                DiagnosticCode::EFunctionArgumentInvalid,
+                                format!(
+                                    "for (...) snapshot source '${}' must be an array variable",
+                                    loop_stmt.array_name
+                                ),
+                                Phase::Validation,
+                                scene,
+                                loop_stmt.line,
+                                loop_stmt.column,
+                            ));
+                            None
+                        }
+                    },
+                    None => {
+                        diags.push(Diagnostic::new(
+                            DiagnosticCode::EVariableUndeclaredRead,
+                            format!(
+                                "Read of undeclared variable '${}' in for snapshot source",
+                                loop_stmt.array_name
+                            ),
+                            Phase::Validation,
+                            scene,
+                            loop_stmt.line,
+                            loop_stmt.column,
+                        ));
+                        None
+                    }
+                };
+
+                let mut loop_scope = declared_vars.clone();
+                if let Some(element_type) = iterator_type {
+                    loop_scope.insert(loop_stmt.item_name.clone(), element_type);
+                }
+
+                validate_story_statements(
+                    &loop_stmt.body,
+                    &loop_scope,
+                    actor_map,
+                    scene_labels,
+                    scene,
+                    loop_depth + 1,
+                    diags,
+                );
+            }
+            StoryStatement::Repeat(repeat_stmt) => {
+                validate_repeat_count(&repeat_stmt.count, declared_vars, scene, diags);
+                validate_story_statements(
+                    &repeat_stmt.body,
+                    declared_vars,
+                    actor_map,
+                    scene_labels,
+                    scene,
+                    loop_depth + 1,
+                    diags,
+                );
+            }
+            StoryStatement::Break { line, column }
+            | StoryStatement::Continue { line, column } => {
+                if loop_depth == 0 {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::ELoopControlOutsideLoop,
+                        "break/continue is only valid inside loop bodies",
+                        Phase::Validation,
+                        scene,
+                        *line,
+                        *column,
+                    ));
                 }
             }
             StoryStatement::Narration { text, line, column } => {
@@ -825,6 +997,254 @@ fn validate_story_statements(
             }
             StoryStatement::End { .. } | StoryStatement::SfxDirective { .. } => {}
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ChoiceAvailability {
+    can_produce: bool,
+    guaranteed_non_empty: bool,
+}
+
+impl ChoiceAvailability {
+    fn empty() -> Self {
+        Self {
+            can_produce: false,
+            guaranteed_non_empty: false,
+        }
+    }
+}
+
+fn validate_choice_entries(
+    entries: &[ChoiceEntry],
+    declared_vars: &VarTypes,
+    scene_labels: &HashSet<String>,
+    scene: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> ChoiceAvailability {
+    let mut aggregate = ChoiceAvailability::empty();
+
+    for entry in entries {
+        let availability = validate_choice_entry(entry, declared_vars, scene_labels, scene, diags);
+        aggregate.can_produce |= availability.can_produce;
+        aggregate.guaranteed_non_empty |= availability.guaranteed_non_empty;
+    }
+
+    aggregate
+}
+
+fn validate_choice_entry(
+    entry: &ChoiceEntry,
+    declared_vars: &VarTypes,
+    scene_labels: &HashSet<String>,
+    scene: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> ChoiceAvailability {
+    match entry {
+        ChoiceEntry::Option(opt) => {
+            if !scene_labels.contains(&opt.target) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EChoiceTargetMissing,
+                    format!("@choice target '{}' does not match any scene label", opt.target),
+                    Phase::Validation,
+                    scene,
+                    opt.line,
+                    opt.column,
+                ));
+            }
+
+            validate_interpolated_string(
+                &opt.text,
+                opt.line,
+                opt.column,
+                declared_vars,
+                scene,
+                diags,
+            );
+
+            ChoiceAvailability {
+                can_produce: true,
+                guaranteed_non_empty: true,
+            }
+        }
+        ChoiceEntry::If(if_entry) => {
+            let cond_ty = infer_expr_type(
+                &if_entry.condition,
+                if_entry.line,
+                if_entry.column,
+                None,
+                false,
+                declared_vars,
+                scene,
+                diags,
+            );
+            if let Some(ty) = cond_ty {
+                if ty != VarType::Boolean {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EConditionTypeInvalid,
+                        format!("@choice condition must be boolean, found {}", type_name(ty)),
+                        Phase::Validation,
+                        scene,
+                        if_entry.line,
+                        if_entry.column,
+                    ));
+                }
+            }
+
+            let body = validate_choice_entries(&if_entry.body, declared_vars, scene_labels, scene, diags);
+            match try_const_eval_bool(&if_entry.condition) {
+                Some(false) => ChoiceAvailability::empty(),
+                Some(true) => body,
+                None => ChoiceAvailability {
+                    can_produce: body.can_produce,
+                    guaranteed_non_empty: false,
+                },
+            }
+        }
+        ChoiceEntry::Repeat(repeat_entry) => {
+            validate_repeat_count(&repeat_entry.count, declared_vars, scene, diags);
+            let body = validate_choice_entries(
+                &repeat_entry.body,
+                declared_vars,
+                scene_labels,
+                scene,
+                diags,
+            );
+
+            match &repeat_entry.count {
+                RepeatCount::IntLiteral { value, .. } if *value <= 0 => ChoiceAvailability::empty(),
+                RepeatCount::IntLiteral { .. } => body,
+                RepeatCount::Variable { .. } => ChoiceAvailability {
+                    can_produce: body.can_produce,
+                    guaranteed_non_empty: false,
+                },
+            }
+        }
+        ChoiceEntry::ForSnapshot(loop_entry) => {
+            let mut iterator_valid = true;
+            if declared_vars.contains_key(&loop_entry.item_name) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EVariableScopeConflict,
+                    format!(
+                        "Loop iterator '${}' conflicts with an existing variable in scene scope",
+                        loop_entry.item_name
+                    ),
+                    Phase::Validation,
+                    scene,
+                    loop_entry.line,
+                    loop_entry.column,
+                ));
+                iterator_valid = false;
+            }
+
+            let iterator_type = match declared_vars.get(&loop_entry.array_name).copied() {
+                Some(array_type) => match array_element_type(array_type) {
+                    Some(element_type) => Some(element_type),
+                    None => {
+                        diags.push(Diagnostic::new(
+                            DiagnosticCode::EFunctionArgumentInvalid,
+                            format!(
+                                "for (...) snapshot source '${}' must be an array variable",
+                                loop_entry.array_name
+                            ),
+                            Phase::Validation,
+                            scene,
+                            loop_entry.line,
+                            loop_entry.column,
+                        ));
+                        iterator_valid = false;
+                        None
+                    }
+                },
+                None => {
+                    diags.push(Diagnostic::new(
+                        DiagnosticCode::EVariableUndeclaredRead,
+                        format!(
+                            "Read of undeclared variable '${}' in for snapshot source",
+                            loop_entry.array_name
+                        ),
+                        Phase::Validation,
+                        scene,
+                        loop_entry.line,
+                        loop_entry.column,
+                    ));
+                    iterator_valid = false;
+                    None
+                }
+            };
+
+            let mut loop_scope = declared_vars.clone();
+            if iterator_valid {
+                if let Some(element_type) = iterator_type {
+                    loop_scope.insert(loop_entry.item_name.clone(), element_type);
+                }
+            }
+
+            let body = validate_choice_entries(
+                &loop_entry.body,
+                &loop_scope,
+                scene_labels,
+                scene,
+                diags,
+            );
+
+            if iterator_valid {
+                ChoiceAvailability {
+                    can_produce: body.can_produce,
+                    guaranteed_non_empty: false,
+                }
+            } else {
+                ChoiceAvailability::empty()
+            }
+        }
+    }
+}
+
+fn validate_repeat_count(
+    count: &RepeatCount,
+    declared_vars: &VarTypes,
+    scene: &str,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match count {
+        RepeatCount::IntLiteral {
+            value,
+            line,
+            column,
+        } => {
+            if *value <= 0 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::ERangeInvalid,
+                    "repeat(count) requires count > 0",
+                    Phase::Validation,
+                    scene,
+                    *line,
+                    *column,
+                ));
+            }
+        }
+        RepeatCount::Variable { name, line, column } => match declared_vars.get(name).copied() {
+            None => diags.push(Diagnostic::new(
+                DiagnosticCode::EVariableUndeclaredRead,
+                format!("Read of undeclared variable '${}' in repeat count", name),
+                Phase::Validation,
+                scene,
+                *line,
+                *column,
+            )),
+            Some(VarType::Integer) => {}
+            Some(other) => diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionArgumentInvalid,
+                format!(
+                    "repeat(count) requires integer count variable, found {}",
+                    type_name(other)
+                ),
+                Phase::Validation,
+                scene,
+                *line,
+                *column,
+            )),
+        },
     }
 }
 
@@ -2330,6 +2750,7 @@ fn story_terminates(stmts: &[StoryStatement]) -> bool {
             // Both branches must terminate for the overall path to terminate
             then_terminates && else_terminates
         }
+        StoryStatement::ForSnapshot(_) | StoryStatement::Repeat(_) => true,
         _ => false,
     }
 }
@@ -3026,5 +3447,259 @@ mod tests {
             d.code == DiagnosticCode::EFunctionContextInvalid
                 && d.message.contains("not allowed in this phase")
         }));
+    }
+
+    #[test]
+    fn test_break_outside_loop_rejected() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    break
+
+    #STORY
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::ELoopControlOutsideLoop));
+    }
+
+    #[test]
+    fn test_repeat_literal_non_positive_rejected() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    repeat (0) {
+        continue
+    }
+
+    #STORY
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::ERangeInvalid));
+    }
+
+    #[test]
+    fn test_loop_iterator_assignment_rejected() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2]
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    for ($item in snapshot $nums) {
+        $item = 9
+    }
+
+    #STORY
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::ELoopIteratorReadOnly));
+    }
+
+    #[test]
+    fn test_valid_loops_in_prep_and_story() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    $count as integer = 2
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    repeat ($count) {
+        continue
+    }
+
+    for ($item in snapshot $nums) {
+        if ($item == 2) {
+            break
+        }
+    }
+
+    #STORY
+    for ($item in snapshot $nums) {
+        if ($item == 1) {
+            continue
+        }
+    }
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        let errors: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_choice_nested_for_repeat_if_valid() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    @actor A "Alice"
+    @start main
+}
+* done {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    @choice {
+        for ($item in snapshot $nums) {
+            if ($item > 1) {
+                repeat (2) {
+                    "Pick ${item}" -> done;
+                }
+            }
+        }
+
+        "Fallback" -> done;
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        let errors: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_choice_for_snapshot_source_non_array_rejected() {
+        let src = r#"
+* INIT {
+    $count as integer = 2
+    @actor A "Alice"
+    @start main
+}
+* done {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    @choice {
+        for ($item in snapshot $count) {
+            "Invalid" -> done;
+        }
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EFunctionArgumentInvalid
+                && d.message.contains("snapshot source")
+        }));
+    }
+
+    #[test]
+    fn test_choice_for_iterator_scope_limited_to_body() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2]
+    @actor A "Alice"
+    @start main
+}
+* done {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    @choice {
+        for ($item in snapshot $nums) {
+            "Inside ${item}" -> done;
+        }
+
+        "Outside ${item}" -> done;
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EVariableUndeclaredRead && d.message.contains("$item")
+        }));
+    }
+
+    #[test]
+    fn test_choice_repeat_zero_rejected() {
+        let src = r#"
+* INIT {
+    @actor A "Alice"
+    @start main
+}
+* done {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    @choice {
+        repeat (0) {
+            "Never" -> done;
+        }
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::ERangeInvalid));
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EChoiceStaticEmpty));
+    }
+
+    #[test]
+    fn test_choice_for_iterator_collision_rejected() {
+        let src = r#"
+* INIT {
+    $item as integer = 10
+    $nums as array<integer> = [1, 2]
+    @actor A "Alice"
+    @start main
+}
+* done {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    @choice {
+        for ($item in snapshot $nums) {
+            "x" -> done;
+        }
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EVariableScopeConflict));
     }
 }

@@ -44,6 +44,8 @@ pub enum DiagnosticCode {
     EConditionTypeInvalid,
     EChoiceStaticEmpty,
     EStoryUnterminatedPath,
+    ELoopControlOutsideLoop,
+    ELoopIteratorReadOnly,
 
     // Warnings
     WChoicePossiblyEmpty,
@@ -60,6 +62,9 @@ pub enum DiagnosticCode {
     RArrayEmpty,
     RArrayIndexOutOfRange,
     RArraySampleCountInvalid,
+    RRepeatCountInvalid,
+    RStoryLoopTerminationInvalid,
+    RChoiceOptionCapExceeded,
 }
 
 impl fmt::Display for DiagnosticCode {
@@ -106,6 +111,8 @@ impl fmt::Display for DiagnosticCode {
             Self::EConditionTypeInvalid => "E_CONDITION_TYPE_INVALID",
             Self::EChoiceStaticEmpty => "E_CHOICE_STATIC_EMPTY",
             Self::EStoryUnterminatedPath => "E_STORY_UNTERMINATED_PATH",
+            Self::ELoopControlOutsideLoop => "E_LOOP_CONTROL_OUTSIDE_LOOP",
+            Self::ELoopIteratorReadOnly => "E_LOOP_ITERATOR_READ_ONLY",
             Self::WChoicePossiblyEmpty => "W_CHOICE_POSSIBLY_EMPTY",
             Self::RChoiceExhausted => "R_CHOICE_EXHAUSTED",
             Self::RAssetNotFound => "R_ASSET_NOT_FOUND",
@@ -118,6 +125,9 @@ impl fmt::Display for DiagnosticCode {
             Self::RArrayEmpty => "R_ARRAY_EMPTY",
             Self::RArrayIndexOutOfRange => "R_ARRAY_INDEX_OUT_OF_RANGE",
             Self::RArraySampleCountInvalid => "R_ARRAY_SAMPLE_COUNT_INVALID",
+            Self::RRepeatCountInvalid => "R_REPEAT_COUNT_INVALID",
+            Self::RStoryLoopTerminationInvalid => "R_STORY_LOOP_TERMINATION_INVALID",
+            Self::RChoiceOptionCapExceeded => "R_CHOICE_OPTION_CAP_EXCEEDED",
         };
         write!(f, "{}", s)
     }

@@ -157,6 +157,16 @@ pub enum PrepStatement {
         column: usize,
     },
     IfElse(PrepIfElse),
+    ForSnapshot(PrepForSnapshot),
+    Repeat(PrepRepeat),
+    Break {
+        line: usize,
+        column: usize,
+    },
+    Continue {
+        line: usize,
+        column: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +196,23 @@ pub struct PrepIfElse {
     pub condition: Expr,
     pub then_branch: Vec<PrepStatement>,
     pub else_branch: Option<Vec<PrepStatement>>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrepForSnapshot {
+    pub item_name: String,
+    pub array_name: String,
+    pub body: Vec<PrepStatement>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrepRepeat {
+    pub count: RepeatCount,
+    pub body: Vec<PrepStatement>,
     pub line: usize,
     pub column: usize,
 }
@@ -227,6 +254,16 @@ pub enum StoryStatement {
     },
     SfxDirective {
         path: String,
+        line: usize,
+        column: usize,
+    },
+    ForSnapshot(StoryForSnapshot),
+    Repeat(StoryRepeat),
+    Break {
+        line: usize,
+        column: usize,
+    },
+    Continue {
         line: usize,
         column: usize,
     },
@@ -276,18 +313,81 @@ pub struct StoryIfElse {
 
 #[derive(Debug, Clone)]
 pub struct ChoiceBlock {
-    pub options: Vec<ChoiceOption>,
+    pub entries: Vec<ChoiceEntry>,
     pub line: usize,
     pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChoiceEntry {
+    Option(ChoiceOption),
+    If(ChoiceIfEntry),
+    Repeat(ChoiceRepeatEntry),
+    ForSnapshot(ChoiceForSnapshotEntry),
 }
 
 #[derive(Debug, Clone)]
 pub struct ChoiceOption {
     pub text: String,
     pub target: String,
-    pub condition: Option<Expr>,
     pub line: usize,
     pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChoiceIfEntry {
+    pub condition: Expr,
+    pub body: Vec<ChoiceEntry>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChoiceRepeatEntry {
+    pub count: RepeatCount,
+    pub body: Vec<ChoiceEntry>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChoiceForSnapshotEntry {
+    pub item_name: String,
+    pub array_name: String,
+    pub body: Vec<ChoiceEntry>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoryForSnapshot {
+    pub item_name: String,
+    pub array_name: String,
+    pub body: Vec<StoryStatement>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoryRepeat {
+    pub count: RepeatCount,
+    pub body: Vec<StoryStatement>,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum RepeatCount {
+    IntLiteral {
+        value: i64,
+        line: usize,
+        column: usize,
+    },
+    Variable {
+        name: String,
+        line: usize,
+        column: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------

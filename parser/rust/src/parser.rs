@@ -989,6 +989,20 @@ impl Parser {
                     None
                 }
             }
+            Token::For => self.parse_prep_for_snapshot(scene),
+            Token::Repeat => self.parse_prep_repeat(scene),
+            Token::Break => {
+                let (line, column) = self.current_span();
+                self.advance();
+                self.eat_optional_semicolon();
+                Some(PrepStatement::Break { line, column })
+            }
+            Token::Continue => {
+                let (line, column) = self.current_span();
+                self.advance();
+                self.eat_optional_semicolon();
+                Some(PrepStatement::Continue { line, column })
+            }
             Token::Ident(_) => self.parse_prep_call_statement(scene),
             _ => {
                 let (l, c) = self.current_span();
@@ -1194,6 +1208,173 @@ impl Parser {
         })
     }
 
+    fn parse_repeat_count(&mut self, scene: &str) -> Option<RepeatCount> {
+        let (line, column) = self.current_span();
+        match self.peek().clone() {
+            Token::IntLit(value) => {
+                self.advance();
+                Some(RepeatCount::IntLiteral {
+                    value,
+                    line,
+                    column,
+                })
+            }
+            Token::Dollar => {
+                self.advance();
+                if let Token::Ident(name) = self.peek().clone() {
+                    self.advance();
+                    Some(RepeatCount::Variable { name, line, column })
+                } else {
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::ESyntax,
+                        "Expected variable name after '$' in repeat count",
+                        Phase::Parse,
+                        scene,
+                        line,
+                        column,
+                    ));
+                    None
+                }
+            }
+            _ => {
+                self.diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ESyntax,
+                    "repeat(count) only supports integer literal or $integer_variable",
+                    Phase::Parse,
+                    scene,
+                    line,
+                    column,
+                ));
+                None
+            }
+        }
+    }
+
+    fn parse_for_snapshot_header(
+        &mut self,
+        scene: &str,
+        line: usize,
+        column: usize,
+    ) -> Option<(String, String)> {
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+        if !self.expect(&Token::Dollar) {
+            return None;
+        }
+
+        let item_name = if let Token::Ident(name) = self.peek().clone() {
+            self.advance();
+            name
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "Expected loop item variable after '$'",
+                Phase::Parse,
+                scene,
+                line,
+                column,
+            ));
+            return None;
+        };
+
+        if !self.expect(&Token::In) {
+            return None;
+        }
+        if !self.expect(&Token::Snapshot) {
+            return None;
+        }
+        if !self.expect(&Token::Dollar) {
+            return None;
+        }
+
+        let array_name = if let Token::Ident(name) = self.peek().clone() {
+            self.advance();
+            name
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ESyntax,
+                "Expected array variable after 'snapshot $'",
+                Phase::Parse,
+                scene,
+                line,
+                column,
+            ));
+            return None;
+        };
+
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+
+        Some((item_name, array_name))
+    }
+
+    fn parse_prep_for_snapshot(&mut self, scene: &str) -> Option<PrepStatement> {
+        let (line, column) = self.current_span();
+        self.advance(); // for
+
+        let (item_name, array_name) = self.parse_for_snapshot_header(scene, line, column)?;
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let mut body = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            if let Some(stmt) = self.parse_prep_statement(scene) {
+                body.push(stmt);
+            } else {
+                self.advance();
+            }
+        }
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(PrepStatement::ForSnapshot(PrepForSnapshot {
+            item_name,
+            array_name,
+            body,
+            line,
+            column,
+        }))
+    }
+
+    fn parse_prep_repeat(&mut self, scene: &str) -> Option<PrepStatement> {
+        let (line, column) = self.current_span();
+        self.advance(); // repeat
+
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+        let count = self.parse_repeat_count(scene)?;
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let mut body = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            if let Some(stmt) = self.parse_prep_statement(scene) {
+                body.push(stmt);
+            } else {
+                self.advance();
+            }
+        }
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(PrepStatement::Repeat(PrepRepeat {
+            count,
+            body,
+            line,
+            column,
+        }))
+    }
+
     // -----------------------------------------------------------------------
     // #STORY
     // -----------------------------------------------------------------------
@@ -1266,6 +1447,20 @@ impl Parser {
                 Some(StoryStatement::End { line: l, column: c })
             }
             Token::If => self.parse_story_if_else(scene),
+            Token::For => self.parse_story_for_snapshot(scene),
+            Token::Repeat => self.parse_story_repeat(scene),
+            Token::Break => {
+                let (line, column) = self.current_span();
+                self.advance();
+                self.eat_optional_semicolon();
+                Some(StoryStatement::Break { line, column })
+            }
+            Token::Continue => {
+                let (line, column) = self.current_span();
+                self.advance();
+                self.eat_optional_semicolon();
+                Some(StoryStatement::Continue { line, column })
+            }
             Token::Ident(_) => self.parse_dialogue(scene),
             Token::Dollar => self.parse_story_var_output(scene),
             Token::AtBg | Token::AtBgm | Token::AtSfx => {
@@ -1401,6 +1596,10 @@ impl Parser {
                 | Token::AtJump
                 | Token::AtEnd
                 | Token::If
+                | Token::For
+                | Token::Repeat
+                | Token::Break
+                | Token::Continue
                 | Token::AtBg
                 | Token::AtBgm
                 | Token::AtSfx
@@ -1530,84 +1729,62 @@ impl Parser {
             return None;
         }
 
-        let mut options = Vec::new();
-
-        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-            match self.peek().clone() {
-                Token::StringLit(_) => {
-                    if let Some(opt) = self.parse_choice_option(scene, None) {
-                        options.push(opt);
-                    }
-                }
-                Token::If => {
-                    let (il, ic) = self.current_span();
-                    self.advance(); // if
-                    if !self.expect(&Token::LParen) {
-                        continue;
-                    }
-                    let cond = match self.parse_expression() {
-                        Some(e) => e,
-                        None => continue,
-                    };
-                    if !self.expect(&Token::RParen) {
-                        continue;
-                    }
-                    if !self.expect(&Token::LBrace) {
-                        continue;
-                    }
-                    while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                        if let Token::StringLit(_) = self.peek().clone() {
-                            if let Some(opt) = self.parse_choice_option(scene, Some(cond.clone())) {
-                                options.push(opt);
-                            }
-                        } else {
-                            let (l, c) = self.current_span();
-                            self.diagnostics.push(Diagnostic::new(
-                                DiagnosticCode::ESyntax,
-                                format!(
-                                    "Expected choice option string inside conditional, found {}",
-                                    self.peek().name()
-                                ),
-                                Phase::Parse,
-                                scene,
-                                l,
-                                c,
-                            ));
-                            self.advance();
-                        }
-                    }
-                    self.expect(&Token::RBrace);
-                    let _ = (il, ic); // suppress unused
-                }
-                _ => {
-                    let (l, c) = self.current_span();
-                    self.diagnostics.push(Diagnostic::new(
-                        DiagnosticCode::ESyntax,
-                        format!("Unexpected token {} in @choice block", self.peek().name()),
-                        Phase::Parse,
-                        scene,
-                        l,
-                        c,
-                    ));
-                    self.advance();
-                }
-            }
-        }
+        let entries = self.parse_choice_entries(scene);
 
         self.expect(&Token::RBrace);
 
         Some(StoryStatement::Choice(ChoiceBlock {
-            options,
+            entries,
             line,
             column,
         }))
     }
 
-    fn parse_choice_option(
-        &mut self,
-        scene: &str,
-        condition: Option<Expr>,
-    ) -> Option<ChoiceOption> {
+    fn parse_choice_entries(&mut self, scene: &str) -> Vec<ChoiceEntry> {
+        let mut entries = Vec::new();
+
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            let start_pos = self.pos;
+            if let Some(entry) = self.parse_choice_entry(scene) {
+                entries.push(entry);
+                continue;
+            }
+
+            if self.pos == start_pos {
+                self.recover_choice_entry_tail();
+            }
+            if self.pos == start_pos && !matches!(self.peek(), Token::RBrace | Token::Eof) {
+                self.advance();
+            }
+        }
+
+        entries
+    }
+
+    fn parse_choice_entry(&mut self, scene: &str) -> Option<ChoiceEntry> {
+        match self.peek().clone() {
+            Token::StringLit(_) => self
+                .parse_choice_option(scene)
+                .map(ChoiceEntry::Option),
+            Token::If => self.parse_choice_if_entry(scene),
+            Token::Repeat => self.parse_choice_repeat_entry(scene),
+            Token::For => self.parse_choice_for_snapshot_entry(scene),
+            _ => {
+                let (l, c) = self.current_span();
+                self.diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ESyntax,
+                    format!("Unexpected token {} in @choice block", self.peek().name()),
+                    Phase::Parse,
+                    scene,
+                    l,
+                    c,
+                ));
+                None
+            }
+        }
+    }
+
+    fn parse_choice_option(&mut self, scene: &str) -> Option<ChoiceOption> {
         let (line, column) = self.current_span();
         let text = if let Token::StringLit(s) = self.peek().clone() {
             self.advance();
@@ -1641,10 +1818,88 @@ impl Parser {
         Some(ChoiceOption {
             text,
             target,
-            condition,
             line,
             column,
         })
+    }
+
+    fn parse_choice_if_entry(&mut self, scene: &str) -> Option<ChoiceEntry> {
+        let (line, column) = self.current_span();
+        self.advance(); // if
+
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+        let condition = self.parse_expression()?;
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let body = self.parse_choice_entries(scene);
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(ChoiceEntry::If(ChoiceIfEntry {
+            condition,
+            body,
+            line,
+            column,
+        }))
+    }
+
+    fn parse_choice_repeat_entry(&mut self, scene: &str) -> Option<ChoiceEntry> {
+        let (line, column) = self.current_span();
+        self.advance(); // repeat
+
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+        let count = self.parse_repeat_count(scene)?;
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let body = self.parse_choice_entries(scene);
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(ChoiceEntry::Repeat(ChoiceRepeatEntry {
+            count,
+            body,
+            line,
+            column,
+        }))
+    }
+
+    fn parse_choice_for_snapshot_entry(&mut self, scene: &str) -> Option<ChoiceEntry> {
+        let (line, column) = self.current_span();
+        self.advance(); // for
+
+        let (item_name, array_name) = self.parse_for_snapshot_header(scene, line, column)?;
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let body = self.parse_choice_entries(scene);
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(ChoiceEntry::ForSnapshot(ChoiceForSnapshotEntry {
+            item_name,
+            array_name,
+            body,
+            line,
+            column,
+        }))
     }
 
     fn parse_story_if_else(&mut self, scene: &str) -> Option<StoryStatement> {
@@ -1710,6 +1965,105 @@ impl Parser {
             line,
             column,
         }))
+    }
+
+    fn parse_story_for_snapshot(&mut self, scene: &str) -> Option<StoryStatement> {
+        let (line, column) = self.current_span();
+        self.advance(); // for
+
+        let (item_name, array_name) = self.parse_for_snapshot_header(scene, line, column)?;
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let mut body = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            if let Some(stmt) = self.parse_story_statement(scene) {
+                body.push(stmt);
+            } else {
+                if matches!(self.peek(), Token::RBrace | Token::Eof) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(StoryStatement::ForSnapshot(StoryForSnapshot {
+            item_name,
+            array_name,
+            body,
+            line,
+            column,
+        }))
+    }
+
+    fn parse_story_repeat(&mut self, scene: &str) -> Option<StoryStatement> {
+        let (line, column) = self.current_span();
+        self.advance(); // repeat
+
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+        let count = self.parse_repeat_count(scene)?;
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+        if !self.expect(&Token::LBrace) {
+            return None;
+        }
+
+        let mut body = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            if let Some(stmt) = self.parse_story_statement(scene) {
+                body.push(stmt);
+            } else {
+                if matches!(self.peek(), Token::RBrace | Token::Eof) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        if !self.expect(&Token::RBrace) {
+            return None;
+        }
+
+        Some(StoryStatement::Repeat(StoryRepeat {
+            count,
+            body,
+            line,
+            column,
+        }))
+    }
+
+    fn recover_choice_entry_tail(&mut self) {
+        let mut depth = 0usize;
+
+        while self.peek() != &Token::Eof {
+            match self.peek() {
+                Token::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                Token::RBrace => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    self.advance();
+                }
+                Token::StringLit(_) | Token::If | Token::Repeat | Token::For if depth == 0 => {
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

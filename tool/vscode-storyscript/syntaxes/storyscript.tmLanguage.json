@@ -219,7 +219,7 @@
     },
 
     "control-flow": {
-      "match": "\\b(if|else)\\b",
+      "match": "\\b(if|else|for|repeat|break|continue|in|snapshot)\\b",
       "name": "keyword.control.flow.storyscript"
     },
 

@@ -97,6 +97,25 @@ enum CallMode {
     Statement,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrepFlow {
+    Next,
+    BreakLoop,
+    ContinueLoop,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoryFlow {
+    Open,
+    BreakLoop,
+    ContinueLoop,
+    Terminated,
+    Error,
+}
+
+const CHOICE_OPTION_CAP: usize = 9;
+
 // ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
@@ -205,12 +224,16 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn execute_prep(&mut self, stmts: &[PrepStatement]) -> bool {
+        matches!(self.execute_prep_block(stmts, false), PrepFlow::Next)
+    }
+
+    fn execute_prep_block(&mut self, stmts: &[PrepStatement], in_loop: bool) -> PrepFlow {
         for stmt in stmts {
             match stmt {
                 PrepStatement::BgDirective { path, .. } => {
                     let resolved = match self.resolve_string_or_error(path, "@bg path") {
                         Some(value) => value,
-                        None => return false,
+                        None => return PrepFlow::Error,
                     };
                     self.bg = Some(resolved);
                 }
@@ -219,7 +242,7 @@ impl Engine {
                         BgmValue::Path(p) => {
                             let resolved = match self.resolve_string_or_error(p, "@bgm path") {
                                 Some(value) => value,
-                                None => return false,
+                                None => return PrepFlow::Error,
                             };
                             Some(resolved)
                         }
@@ -240,12 +263,12 @@ impl Engine {
                                 decl.name, self.current_scene
                             ),
                         );
-                        return false;
+                        return PrepFlow::Error;
                     }
 
                     let value = match self.eval_expr(&decl.value, Some(decl.var_type)) {
                         Some(v) => v,
-                        None => return false,
+                        None => return PrepFlow::Error,
                     };
                     let value_type = value_type(&value);
                     let coerced = match coerce_value_for_type(value, decl.var_type) {
@@ -260,7 +283,7 @@ impl Engine {
                                     type_name(value_type)
                                 ),
                             );
-                            return false;
+                            return PrepFlow::Error;
                         }
                     };
 
@@ -275,13 +298,13 @@ impl Engine {
                                 "RUNTIME",
                                 format!("Unknown variable '${}' in PREP assignment", assign.name),
                             );
-                            return false;
+                            return PrepFlow::Error;
                         }
                     };
 
                     let rhs = match self.eval_expr(&assign.value, Some(declared_type)) {
                         Some(value) => value,
-                        None => return false,
+                        None => return PrepFlow::Error,
                     };
                     let rhs_type = value_type(&rhs);
 
@@ -299,7 +322,7 @@ impl Engine {
                                             type_name(rhs_type)
                                         ),
                                     );
-                                    return false;
+                                    return PrepFlow::Error;
                                 }
                             };
                             self.write_variable(&assign.name, coerced);
@@ -315,7 +338,7 @@ impl Engine {
                                             assign.name
                                         ),
                                     );
-                                    return false;
+                                    return PrepFlow::Error;
                                 }
                             };
 
@@ -337,7 +360,7 @@ impl Engine {
                                                     type_name(value_type(&other))
                                                 ),
                                             );
-                                            return false;
+                                            return PrepFlow::Error;
                                         }
                                     };
 
@@ -359,7 +382,7 @@ impl Engine {
                                                     assign.name
                                                 ),
                                             );
-                                            return false;
+                                            return PrepFlow::Error;
                                         }
                                     };
                                     let rhs_num = match as_decimal(&rhs) {
@@ -378,7 +401,7 @@ impl Engine {
                                                     type_name(value_type(&rhs))
                                                 ),
                                             );
-                                            return false;
+                                            return PrepFlow::Error;
                                         }
                                     };
 
@@ -408,7 +431,7 @@ impl Engine {
                                             type_name(declared_type)
                                         ),
                                     );
-                                    return false;
+                                    return PrepFlow::Error;
                                 }
                             }
                         }
@@ -424,29 +447,97 @@ impl Engine {
                         .eval_call(name, args, *line, *column, None, CallMode::Statement)
                         .is_none()
                     {
-                        return false;
+                        return PrepFlow::Error;
                     }
                 }
                 PrepStatement::IfElse(if_else) => {
                     let condition = match self.eval_bool(&if_else.condition) {
                         Some(value) => value,
-                        None => return false,
+                        None => return PrepFlow::Error,
                     };
 
-                    if condition {
-                        if !self.execute_prep(&if_else.then_branch) {
-                            return false;
-                        }
+                    let branch_flow = if condition {
+                        self.execute_prep_block(&if_else.then_branch, in_loop)
                     } else if let Some(else_branch) = &if_else.else_branch {
-                        if !self.execute_prep(else_branch) {
-                            return false;
+                        self.execute_prep_block(else_branch, in_loop)
+                    } else {
+                        PrepFlow::Next
+                    };
+
+                    if branch_flow != PrepFlow::Next {
+                        return branch_flow;
+                    }
+                }
+                PrepStatement::ForSnapshot(loop_stmt) => {
+                    let (snapshot_items, element_type) =
+                        match self.resolve_snapshot_array(&loop_stmt.array_name) {
+                            Some(result) => result,
+                            None => return PrepFlow::Error,
+                        };
+
+                    let previous_type =
+                        self.local_var_types.insert(loop_stmt.item_name.clone(), element_type);
+                    let previous_value = self.local_variables.remove(&loop_stmt.item_name);
+
+                    for item in snapshot_items {
+                        self.local_variables.insert(loop_stmt.item_name.clone(), item);
+
+                        match self.execute_prep_block(&loop_stmt.body, true) {
+                            PrepFlow::Next => {}
+                            PrepFlow::ContinueLoop => continue,
+                            PrepFlow::BreakLoop => break,
+                            PrepFlow::Error => {
+                                self.restore_loop_binding(
+                                    &loop_stmt.item_name,
+                                    previous_type,
+                                    previous_value,
+                                );
+                                return PrepFlow::Error;
+                            }
                         }
                     }
+
+                    self.restore_loop_binding(&loop_stmt.item_name, previous_type, previous_value);
+                }
+                PrepStatement::Repeat(repeat_stmt) => {
+                    let count = match self.eval_repeat_count(&repeat_stmt.count) {
+                        Some(value) => value,
+                        None => return PrepFlow::Error,
+                    };
+
+                    for _ in 0..count {
+                        match self.execute_prep_block(&repeat_stmt.body, true) {
+                            PrepFlow::Next => {}
+                            PrepFlow::ContinueLoop => continue,
+                            PrepFlow::BreakLoop => break,
+                            PrepFlow::Error => return PrepFlow::Error,
+                        }
+                    }
+                }
+                PrepStatement::Break { .. } => {
+                    if in_loop {
+                        return PrepFlow::BreakLoop;
+                    }
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "break is only valid inside loop bodies".to_string(),
+                    );
+                    return PrepFlow::Error;
+                }
+                PrepStatement::Continue { .. } => {
+                    if in_loop {
+                        return PrepFlow::ContinueLoop;
+                    }
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "continue is only valid inside loop bodies".to_string(),
+                    );
+                    return PrepFlow::Error;
                 }
             }
         }
 
-        true
+        PrepFlow::Next
     }
 
     // -----------------------------------------------------------------------
@@ -454,12 +545,20 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn flatten_story(&mut self, stmts: &[StoryStatement]) {
-        for stmt in stmts {
+        let _ = self.flatten_story_block(stmts, false);
+    }
+
+    fn flatten_story_block(&mut self, stmts: &[StoryStatement], in_loop: bool) -> StoryFlow {
+        let len = stmts.len();
+
+        for (idx, stmt) in stmts.iter().enumerate() {
+            let is_last_stmt = idx + 1 == len;
+
             match stmt {
                 StoryStatement::Narration { text, .. } => {
                     let resolved = match self.resolve_string_or_error(text, "narration") {
                         Some(value) => value,
-                        None => return,
+                        None => return StoryFlow::Error,
                     };
                     self.pending.push_back(InternalEvent::Narration(resolved));
                 }
@@ -472,7 +571,7 @@ impl Engine {
                             "RUNTIME",
                             format!("Variable '${}' was missing during STORY output", name),
                         );
-                        return;
+                        return StoryFlow::Error;
                     }
                 }
                 StoryStatement::Dialogue(dlg) => {
@@ -486,7 +585,7 @@ impl Engine {
                         .resolve_string_or_error(&actor_name_template, "actor display name")
                     {
                         Some(value) => value,
-                        None => return,
+                        None => return StoryFlow::Error,
                     };
 
                     let (emotion, position) = match &dlg.form {
@@ -503,7 +602,7 @@ impl Engine {
 
                     let text = match self.resolve_string_or_error(&dlg.text, "dialogue") {
                         Some(value) => value,
-                        None => return,
+                        None => return StoryFlow::Error,
                     };
 
                     self.pending.push_back(InternalEvent::Dialogue {
@@ -517,46 +616,58 @@ impl Engine {
                 StoryStatement::IfElse(if_else) => {
                     let condition = match self.eval_bool(&if_else.condition) {
                         Some(value) => value,
-                        None => return,
+                        None => return StoryFlow::Error,
                     };
 
-                    if condition {
-                        self.flatten_story(&if_else.then_branch);
-                        if self.finished {
-                            return;
-                        }
+                    let branch_flow = if condition {
+                        self.flatten_story_block(&if_else.then_branch, in_loop)
                     } else if let Some(else_branch) = &if_else.else_branch {
-                        self.flatten_story(else_branch);
-                        if self.finished {
-                            return;
-                        }
+                        self.flatten_story_block(else_branch, in_loop)
+                    } else {
+                        StoryFlow::Open
+                    };
+
+                    if branch_flow != StoryFlow::Open {
+                        return branch_flow;
                     }
+                }
+                StoryStatement::ForSnapshot(loop_stmt) => {
+                    let flow = self.flatten_story_for_snapshot(loop_stmt, is_last_stmt);
+                    if flow != StoryFlow::Open {
+                        return flow;
+                    }
+                }
+                StoryStatement::Repeat(repeat_stmt) => {
+                    let flow = self.flatten_story_repeat(repeat_stmt, is_last_stmt);
+                    if flow != StoryFlow::Open {
+                        return flow;
+                    }
+                }
+                StoryStatement::Break { .. } => {
+                    if in_loop {
+                        return StoryFlow::BreakLoop;
+                    }
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "break is only valid inside loop bodies".to_string(),
+                    );
+                    return StoryFlow::Error;
+                }
+                StoryStatement::Continue { .. } => {
+                    if in_loop {
+                        return StoryFlow::ContinueLoop;
+                    }
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "continue is only valid inside loop bodies".to_string(),
+                    );
+                    return StoryFlow::Error;
                 }
                 StoryStatement::Choice(choice_block) => {
                     let mut options: Vec<ChoiceDisplay> = Vec::new();
-                    for opt in &choice_block.options {
-                        let available = if let Some(condition) = &opt.condition {
-                            match self.eval_bool(condition) {
-                                Some(value) => value,
-                                None => return,
-                            }
-                        } else {
-                            true
-                        };
-
-                        if !available {
-                            continue;
-                        }
-
-                        let text = match self.resolve_string_or_error(&opt.text, "choice label") {
-                            Some(value) => value,
-                            None => return,
-                        };
-
-                        options.push(ChoiceDisplay {
-                            text,
-                            target: opt.target.clone(),
-                        });
+                    let flow = self.flatten_choice_entries(&choice_block.entries, &mut options);
+                    if flow != StoryFlow::Open {
+                        return flow;
                     }
 
                     if options.is_empty() {
@@ -564,22 +675,237 @@ impl Engine {
                             "R_CHOICE_EXHAUSTED",
                             "All @choice options were filtered out at runtime".to_string(),
                         );
-                        return;
+                        return StoryFlow::Error;
                     }
 
                     self.pending.push_back(InternalEvent::Choices(options));
+                    return StoryFlow::Terminated;
                 }
                 StoryStatement::Jump { target, .. } => {
                     self.pending.push_back(InternalEvent::Jump(target.clone()));
+                    return StoryFlow::Terminated;
                 }
                 StoryStatement::End { .. } => {
                     self.pending.push_back(InternalEvent::End);
+                    return StoryFlow::Terminated;
                 }
                 StoryStatement::SfxDirective { .. } => {
                     // SFX in STORY: skip in TUI mode
                 }
             }
         }
+
+        StoryFlow::Open
+    }
+
+    fn flatten_choice_entries(
+        &mut self,
+        entries: &[ChoiceEntry],
+        options: &mut Vec<ChoiceDisplay>,
+    ) -> StoryFlow {
+        for entry in entries {
+            let flow = self.flatten_choice_entry(entry, options);
+            if flow != StoryFlow::Open {
+                return flow;
+            }
+        }
+
+        StoryFlow::Open
+    }
+
+    fn flatten_choice_entry(
+        &mut self,
+        entry: &ChoiceEntry,
+        options: &mut Vec<ChoiceDisplay>,
+    ) -> StoryFlow {
+        match entry {
+            ChoiceEntry::Option(opt) => {
+                let text = match self.resolve_string_or_error(&opt.text, "choice label") {
+                    Some(value) => value,
+                    None => return StoryFlow::Error,
+                };
+
+                self.push_choice_option(options, text, opt.target.clone())
+            }
+            ChoiceEntry::If(if_entry) => {
+                let condition = match self.eval_bool(&if_entry.condition) {
+                    Some(value) => value,
+                    None => return StoryFlow::Error,
+                };
+                if condition {
+                    self.flatten_choice_entries(&if_entry.body, options)
+                } else {
+                    StoryFlow::Open
+                }
+            }
+            ChoiceEntry::Repeat(repeat_entry) => {
+                let count = match self.eval_repeat_count(&repeat_entry.count) {
+                    Some(value) => value,
+                    None => return StoryFlow::Error,
+                };
+
+                for _ in 0..count {
+                    let flow = self.flatten_choice_entries(&repeat_entry.body, options);
+                    if flow != StoryFlow::Open {
+                        return flow;
+                    }
+                }
+
+                StoryFlow::Open
+            }
+            ChoiceEntry::ForSnapshot(loop_entry) => {
+                let (snapshot_items, element_type) =
+                    match self.resolve_snapshot_array(&loop_entry.array_name) {
+                        Some(result) => result,
+                        None => return StoryFlow::Error,
+                    };
+
+                let previous_type = self
+                    .local_var_types
+                    .insert(loop_entry.item_name.clone(), element_type);
+                let previous_value = self.local_variables.remove(&loop_entry.item_name);
+
+                for item in snapshot_items {
+                    self.local_variables.insert(loop_entry.item_name.clone(), item);
+                    let flow = self.flatten_choice_entries(&loop_entry.body, options);
+                    if flow != StoryFlow::Open {
+                        self.restore_loop_binding(
+                            &loop_entry.item_name,
+                            previous_type,
+                            previous_value,
+                        );
+                        return flow;
+                    }
+                }
+
+                self.restore_loop_binding(&loop_entry.item_name, previous_type, previous_value);
+                StoryFlow::Open
+            }
+        }
+    }
+
+    fn push_choice_option(
+        &mut self,
+        options: &mut Vec<ChoiceDisplay>,
+        text: String,
+        target: String,
+    ) -> StoryFlow {
+        if options.len() >= CHOICE_OPTION_CAP {
+            self.raise_runtime_error(
+                "R_CHOICE_OPTION_CAP_EXCEEDED",
+                format!(
+                    "@choice expanded to more than {} options at runtime",
+                    CHOICE_OPTION_CAP
+                ),
+            );
+            return StoryFlow::Error;
+        }
+
+        options.push(ChoiceDisplay { text, target });
+        StoryFlow::Open
+    }
+
+    fn flatten_story_for_snapshot(
+        &mut self,
+        loop_stmt: &StoryForSnapshot,
+        is_last_stmt: bool,
+    ) -> StoryFlow {
+        let (snapshot_items, element_type) = match self.resolve_snapshot_array(&loop_stmt.array_name)
+        {
+            Some(result) => result,
+            None => return StoryFlow::Error,
+        };
+
+        let total_iterations = snapshot_items.len();
+        let previous_type = self.local_var_types.insert(loop_stmt.item_name.clone(), element_type);
+        let previous_value = self.local_variables.remove(&loop_stmt.item_name);
+
+        for (idx, item) in snapshot_items.into_iter().enumerate() {
+            self.local_variables.insert(loop_stmt.item_name.clone(), item);
+
+            match self.flatten_story_block(&loop_stmt.body, true) {
+                StoryFlow::Open => {}
+                StoryFlow::ContinueLoop => continue,
+                StoryFlow::BreakLoop => break,
+                StoryFlow::Terminated => {
+                    if idx + 1 < total_iterations {
+                        self.raise_runtime_error(
+                            "R_STORY_LOOP_TERMINATION_INVALID",
+                            "Loop terminal directive would execute multiple times".to_string(),
+                        );
+                        self.restore_loop_binding(
+                            &loop_stmt.item_name,
+                            previous_type,
+                            previous_value,
+                        );
+                        return StoryFlow::Error;
+                    }
+
+                    self.restore_loop_binding(
+                        &loop_stmt.item_name,
+                        previous_type,
+                        previous_value,
+                    );
+                    return StoryFlow::Terminated;
+                }
+                StoryFlow::Error => {
+                    self.restore_loop_binding(
+                        &loop_stmt.item_name,
+                        previous_type,
+                        previous_value,
+                    );
+                    return StoryFlow::Error;
+                }
+            }
+        }
+
+        self.restore_loop_binding(&loop_stmt.item_name, previous_type, previous_value);
+
+        if is_last_stmt {
+            self.raise_runtime_error(
+                "R_STORY_LOOP_TERMINATION_INVALID",
+                "Loop completed without emitting @choice, @jump, or @end".to_string(),
+            );
+            return StoryFlow::Error;
+        }
+
+        StoryFlow::Open
+    }
+
+    fn flatten_story_repeat(&mut self, repeat_stmt: &StoryRepeat, is_last_stmt: bool) -> StoryFlow {
+        let count = match self.eval_repeat_count(&repeat_stmt.count) {
+            Some(value) => value,
+            None => return StoryFlow::Error,
+        };
+
+        for idx in 0..count {
+            match self.flatten_story_block(&repeat_stmt.body, true) {
+                StoryFlow::Open => {}
+                StoryFlow::ContinueLoop => continue,
+                StoryFlow::BreakLoop => break,
+                StoryFlow::Terminated => {
+                    if idx + 1 < count {
+                        self.raise_runtime_error(
+                            "R_STORY_LOOP_TERMINATION_INVALID",
+                            "Loop terminal directive would execute multiple times".to_string(),
+                        );
+                        return StoryFlow::Error;
+                    }
+                    return StoryFlow::Terminated;
+                }
+                StoryFlow::Error => return StoryFlow::Error,
+            }
+        }
+
+        if is_last_stmt {
+            self.raise_runtime_error(
+                "R_STORY_LOOP_TERMINATION_INVALID",
+                "Loop completed without emitting @choice, @jump, or @end".to_string(),
+            );
+            return StoryFlow::Error;
+        }
+
+        StoryFlow::Open
     }
 
     // -----------------------------------------------------------------------
@@ -1798,10 +2124,98 @@ impl Engine {
             .or_else(|| self.var_types.get(name).copied())
     }
 
+    fn eval_repeat_count(&mut self, count: &RepeatCount) -> Option<usize> {
+        let raw_count = match count {
+            RepeatCount::IntLiteral { value, .. } => *value,
+            RepeatCount::Variable { name, .. } => match self.resolve_var_value(name).cloned() {
+                Some(Value::Int(value)) => value,
+                Some(other) => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "repeat(count) requires integer count variable, got {}",
+                            type_name(value_type(&other))
+                        ),
+                    );
+                    return None;
+                }
+                None => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("Read of undeclared variable '${}' in repeat count", name),
+                    );
+                    return None;
+                }
+            },
+        };
+
+        if raw_count <= 0 {
+            self.raise_runtime_error(
+                "R_REPEAT_COUNT_INVALID",
+                format!("repeat(count) requires count > 0, got {}", raw_count),
+            );
+            return None;
+        }
+
+        Some(raw_count as usize)
+    }
+
+    fn resolve_snapshot_array(&mut self, name: &str) -> Option<(Vec<Value>, VarType)> {
+        match self.resolve_var_value(name).cloned() {
+            Some(Value::Array {
+                items,
+                element_type,
+            }) => Some((items, element_type)),
+            Some(other) => {
+                self.raise_runtime_error(
+                    "RUNTIME",
+                    format!(
+                        "for (...) snapshot source '${}' must be an array, got {}",
+                        name,
+                        type_name(value_type(&other))
+                    ),
+                );
+                None
+            }
+            None => {
+                self.raise_runtime_error(
+                    "RUNTIME",
+                    format!("Read of undeclared variable '${}' in for snapshot source", name),
+                );
+                None
+            }
+        }
+    }
+
     fn resolve_var_value(&self, name: &str) -> Option<&Value> {
         self.local_variables
             .get(name)
             .or_else(|| self.variables.get(name))
+    }
+
+    fn restore_loop_binding(
+        &mut self,
+        name: &str,
+        previous_type: Option<VarType>,
+        previous_value: Option<Value>,
+    ) {
+        match previous_type {
+            Some(var_type) => {
+                self.local_var_types.insert(name.to_string(), var_type);
+            }
+            None => {
+                self.local_var_types.remove(name);
+            }
+        }
+
+        match previous_value {
+            Some(value) => {
+                self.local_variables.insert(name.to_string(), value);
+            }
+            None => {
+                self.local_variables.remove(name);
+            }
+        }
     }
 
     fn write_variable(&mut self, name: &str, value: Value) {

@@ -1,0 +1,126 @@
+// ==================================================
+// Feature: Loop For/Repeat + Break/Continue
+// Focus  : snapshot iteration, nearest-loop control, runtime guards, nested @choice loops
+// Coverage:
+// - Happy path in #PREP and #STORY
+// - Boundary condition: repeat(1)
+// - Failure-case notes mapped to diagnostics
+// ==================================================
+
+* INIT {
+    $route as array<integer> = [1, 2, 3, 4]
+    $prep_total as integer = 0
+    $repeat_count as integer = 2
+    $runtime_repeat_count as integer = 1
+
+    @actor SYS "System"
+    @start scene_loop_showcase
+}
+
+* scene_loop_showcase {
+    #PREP
+    // repeat(count) with nearest-loop continue/break.
+    repeat ($repeat_count) {
+        $prep_total += 1
+
+        if ($prep_total == 2) {
+            continue;
+        }
+
+        if ($prep_total == 3) {
+            break;
+        }
+    }
+
+    // snapshot loop: mutating $route does not affect current iteration sequence.
+    for ($item in snapshot $route) {
+        if ($item == 2) {
+            continue;
+        }
+
+        array_push($route, $item)
+
+        if ($item == 3) {
+            break;
+        }
+    }
+
+    // Boundary condition: single iteration repeat.
+    repeat (1) {
+        $prep_total += 1
+    }
+
+    #STORY
+    "Loop showcase ready. PREP total: ${prep_total}."
+
+    repeat (2) {
+        "STORY repeat pulse."
+        continue;
+    }
+
+    for ($item in snapshot $route) {
+        if ($item == 1) {
+            continue;
+        }
+
+        "Snapshot item: ${item}"
+
+        if ($item == 3) {
+            break;
+        }
+    }
+
+    @choice {
+        repeat ($prep_total) {
+            "Re-run loop showcase" -> scene_loop_showcase;
+        }
+
+        for ($item in snapshot $route) {
+            if ($item == 4) {
+                "Inspect snapshot item ${item}" -> scene_loop_showcase;
+            }
+        }
+
+        "Finish" -> scene_loop_end;
+    }
+}
+
+* scene_loop_end {
+    #STORY
+    SYS: "Loop feature showcase complete."
+    @end
+}
+
+// --------------------------------------------------
+// Failure-case notes (intentional invalid snippets):
+// --------------------------------------------------
+// 1) break outside loop:
+//    break;
+//    -> E_LOOP_CONTROL_OUTSIDE_LOOP
+//
+// 2) continue outside loop:
+//    continue;
+//    -> E_LOOP_CONTROL_OUTSIDE_LOOP
+//
+// 3) repeat literal count <= 0:
+//    repeat (0) { "never" }
+//    -> E_RANGE_INVALID
+//
+// 4) iterator write:
+//    for ($item in snapshot $route) {
+//        $item = 99
+//    }
+//    -> E_LOOP_ITERATOR_READ_ONLY
+//
+// 5) runtime repeat count invalid:
+//    $runtime_repeat_count = 0
+//    repeat ($runtime_repeat_count) { "x" }
+//    -> R_REPEAT_COUNT_INVALID
+//
+// 6) deferred STORY loop termination runtime guard:
+//    repeat (2) { @jump scene_loop_end }
+//    -> R_STORY_LOOP_TERMINATION_INVALID
+//
+// 7) runtime choice option cap exceeded (>9 options after expansion):
+//    @choice { repeat (10) { "x" -> scene_loop_end } }
+//    -> R_CHOICE_OPTION_CAP_EXCEEDED
