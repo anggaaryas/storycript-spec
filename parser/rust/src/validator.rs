@@ -781,7 +781,7 @@ fn infer_call_type(
         "abs" => {
             if args.len() != 1 {
                 diags.push(Diagnostic::new(
-                    DiagnosticCode::EExpressionTypeInvalid,
+                    DiagnosticCode::EFunctionArityInvalid,
                     format!("abs() expects exactly 1 argument, found {}", args.len()),
                     Phase::Validation,
                     scene,
@@ -805,7 +805,7 @@ fn infer_call_type(
                 Some(arg_type)
             } else {
                 diags.push(Diagnostic::new(
-                    DiagnosticCode::EExpressionTypeInvalid,
+                    DiagnosticCode::EFunctionArgumentInvalid,
                     format!("abs() requires numeric argument, found {}", type_name(arg_type)),
                     Phase::Validation,
                     scene,
@@ -821,7 +821,7 @@ fn infer_call_type(
                 Some(VarType::Decimal) => VarType::Decimal,
                 Some(other) => {
                     diags.push(Diagnostic::new(
-                        DiagnosticCode::EExpressionTypeInvalid,
+                        DiagnosticCode::EFunctionContextInvalid,
                         format!(
                             "rand() requires integer or decimal assignment target, found {}",
                             type_name(other)
@@ -835,7 +835,7 @@ fn infer_call_type(
                 }
                 None => {
                     diags.push(Diagnostic::new(
-                        DiagnosticCode::EExpressionTypeInvalid,
+                        DiagnosticCode::EFunctionContextInvalid,
                         "rand() requires typed assignment context",
                         Phase::Validation,
                         scene,
@@ -870,7 +870,7 @@ fn infer_call_type(
 
                     if !is_numeric_type(min_ty) || !is_numeric_type(max_ty) {
                         diags.push(Diagnostic::new(
-                            DiagnosticCode::EExpressionTypeInvalid,
+                            DiagnosticCode::EFunctionArgumentInvalid,
                             format!(
                                 "rand(min, max) requires numeric bounds, found {} and {}",
                                 type_name(min_ty),
@@ -888,7 +888,7 @@ fn infer_call_type(
                         VarType::Integer => {
                             if min_ty != VarType::Integer || max_ty != VarType::Integer {
                                 diags.push(Diagnostic::new(
-                                    DiagnosticCode::EExpressionTypeInvalid,
+                                    DiagnosticCode::EFunctionArgumentInvalid,
                                     "Integer rand(min, max) requires integer bounds",
                                     Phase::Validation,
                                     scene,
@@ -906,7 +906,7 @@ fn infer_call_type(
 
                     if let Some(false) = try_const_check_rand_bounds(&args[0], &args[1], target) {
                         diags.push(Diagnostic::new(
-                            DiagnosticCode::EExpressionTypeInvalid,
+                            DiagnosticCode::ERangeInvalid,
                             "rand(min, max) requires min <= max",
                             Phase::Validation,
                             scene,
@@ -920,7 +920,7 @@ fn infer_call_type(
                 }
                 _ => {
                     diags.push(Diagnostic::new(
-                        DiagnosticCode::EExpressionTypeInvalid,
+                        DiagnosticCode::EFunctionArityInvalid,
                         format!(
                             "rand() expects 0 or 2 arguments, found {}",
                             args.len()
@@ -937,7 +937,7 @@ fn infer_call_type(
         "pick" => {
             if args.len() != 1 {
                 diags.push(Diagnostic::new(
-                    DiagnosticCode::EExpressionTypeInvalid,
+                    DiagnosticCode::EFunctionArityInvalid,
                     format!("pick() expects exactly 1 argument, found {}", args.len()),
                     Phase::Validation,
                     scene,
@@ -951,7 +951,7 @@ fn infer_call_type(
                 Expr::ListLit { items, .. } => items,
                 _ => {
                     diags.push(Diagnostic::new(
-                        DiagnosticCode::EExpressionTypeInvalid,
+                        DiagnosticCode::EFunctionArgumentInvalid,
                         "pick() expects a list literal argument: pick([a, b, ...])",
                         Phase::Validation,
                         scene,
@@ -964,7 +964,7 @@ fn infer_call_type(
 
             if values.is_empty() {
                 diags.push(Diagnostic::new(
-                    DiagnosticCode::EExpressionTypeInvalid,
+                    DiagnosticCode::EListEmpty,
                     "pick() requires a non-empty candidate list",
                     Phase::Validation,
                     scene,
@@ -989,7 +989,7 @@ fn infer_call_type(
                             )?;
                             if !is_numeric_type(ty) {
                                 diags.push(Diagnostic::new(
-                                    DiagnosticCode::EExpressionTypeInvalid,
+                                    DiagnosticCode::EFunctionArgumentInvalid,
                                     format!(
                                         "pick() for decimal assignment accepts only integer/decimal candidates, found {}",
                                         type_name(ty)
@@ -1017,7 +1017,7 @@ fn infer_call_type(
                             )?;
                             if !is_assignable(target, ty) {
                                 diags.push(Diagnostic::new(
-                                    DiagnosticCode::EExpressionTypeInvalid,
+                                    DiagnosticCode::EFunctionArgumentInvalid,
                                     format!(
                                         "pick() candidate type {} is incompatible with assignment target {}",
                                         type_name(ty),
@@ -1057,7 +1057,7 @@ fn infer_call_type(
                 )?;
                 if ty != first_type {
                     diags.push(Diagnostic::new(
-                        DiagnosticCode::EExpressionTypeInvalid,
+                        DiagnosticCode::EFunctionArgumentInvalid,
                         format!(
                             "pick() candidates must share one type outside assignment context, found {} and {}",
                             type_name(first_type),
@@ -1075,7 +1075,7 @@ fn infer_call_type(
         }
         _ => {
             diags.push(Diagnostic::new(
-                DiagnosticCode::EExpressionTypeInvalid,
+                DiagnosticCode::EFunctionUnknown,
                 format!("Unknown function '{}'", name),
                 Phase::Validation,
                 scene,
@@ -1507,7 +1507,7 @@ mod tests {
 "#;
         let diags = parse_and_validate(src);
         assert!(diags.iter().any(|d| {
-            d.code == DiagnosticCode::EExpressionTypeInvalid
+            d.code == DiagnosticCode::EFunctionContextInvalid
                 && d.message.contains("requires typed assignment context")
         }));
     }
@@ -1530,7 +1530,7 @@ mod tests {
 "#;
         let diags = parse_and_validate(src);
         assert!(diags.iter().any(|d| {
-            d.code == DiagnosticCode::EExpressionTypeInvalid
+            d.code == DiagnosticCode::EListEmpty
                 && d.message.contains("non-empty candidate list")
         }));
     }

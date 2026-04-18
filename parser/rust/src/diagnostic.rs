@@ -26,6 +26,12 @@ pub enum DiagnosticCode {
     EVariableTypeMismatch,
     EVariableCompoundAssignInvalid,
     EExpressionTypeInvalid,
+    EFunctionUnknown,
+    EFunctionArityInvalid,
+    EFunctionContextInvalid,
+    EFunctionArgumentInvalid,
+    ERangeInvalid,
+    EListEmpty,
     EConditionTypeInvalid,
     EChoiceStaticEmpty,
     EStoryUnterminatedPath,
@@ -39,6 +45,9 @@ pub enum DiagnosticCode {
     RAssetLoadFailed,
     RAudioDeviceFailure,
     RSaveStateCorrupt,
+    RDivideByZero,
+    RModuloByZero,
+    RNumericOverflow,
 }
 
 impl fmt::Display for DiagnosticCode {
@@ -67,6 +76,12 @@ impl fmt::Display for DiagnosticCode {
             Self::EVariableTypeMismatch => "E_VARIABLE_TYPE_MISMATCH",
             Self::EVariableCompoundAssignInvalid => "E_VARIABLE_COMPOUND_ASSIGN_INVALID",
             Self::EExpressionTypeInvalid => "E_EXPRESSION_TYPE_INVALID",
+            Self::EFunctionUnknown => "E_FUNCTION_UNKNOWN",
+            Self::EFunctionArityInvalid => "E_FUNCTION_ARITY_INVALID",
+            Self::EFunctionContextInvalid => "E_FUNCTION_CONTEXT_INVALID",
+            Self::EFunctionArgumentInvalid => "E_FUNCTION_ARGUMENT_INVALID",
+            Self::ERangeInvalid => "E_RANGE_INVALID",
+            Self::EListEmpty => "E_LIST_EMPTY",
             Self::EConditionTypeInvalid => "E_CONDITION_TYPE_INVALID",
             Self::EChoiceStaticEmpty => "E_CHOICE_STATIC_EMPTY",
             Self::EStoryUnterminatedPath => "E_STORY_UNTERMINATED_PATH",
@@ -76,6 +91,9 @@ impl fmt::Display for DiagnosticCode {
             Self::RAssetLoadFailed => "R_ASSET_LOAD_FAILED",
             Self::RAudioDeviceFailure => "R_AUDIO_DEVICE_FAILURE",
             Self::RSaveStateCorrupt => "R_SAVE_STATE_CORRUPT",
+            Self::RDivideByZero => "R_DIVIDE_BY_ZERO",
+            Self::RModuloByZero => "R_MODULO_BY_ZERO",
+            Self::RNumericOverflow => "R_NUMERIC_OVERFLOW",
         };
         write!(f, "{}", s)
     }

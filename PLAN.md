@@ -229,6 +229,7 @@ The compiler must fail the script when any of the following is true:
 * Any compound assignment (`+=`, `-=`) targets non-numeric variable types.
 * Any expression uses incompatible operand types for its operator.
 * Any modulo expression (`%`) uses non-integer operands.
+* Any expression calls an unknown function name.
 * Any `abs()` call uses non-numeric argument or wrong arity.
 * Any `rand()`/`rand(min,max)` call is used without typed assignment context.
 * Any `rand(min,max)` call has incompatible bound types for assignment target type.
@@ -272,6 +273,12 @@ Diagnostic code naming:
 | `E_VARIABLE_TYPE_MISMATCH` | Variable assignment or initializer type is incompatible with its declared variable type. |
 | `E_VARIABLE_COMPOUND_ASSIGN_INVALID` | Compound assignment (`+=`, `-=`) is used on non-numeric variable type. |
 | `E_EXPRESSION_TYPE_INVALID` | Expression operator is used with incompatible operand types. |
+| `E_FUNCTION_UNKNOWN` | Function name is not recognized. |
+| `E_FUNCTION_ARITY_INVALID` | Function call has invalid argument count. |
+| `E_FUNCTION_CONTEXT_INVALID` | Function call is used in an invalid context (for example: `rand()` outside typed assignment context). |
+| `E_FUNCTION_ARGUMENT_INVALID` | Function argument type or shape is invalid. |
+| `E_RANGE_INVALID` | Function range input is invalid (for example: `rand(min,max)` where `min > max`). |
+| `E_LIST_EMPTY` | Function requires non-empty list argument but received empty list. |
 | `E_CONDITION_TYPE_INVALID` | Condition expression does not evaluate to boolean. |
 | `E_CHOICE_STATIC_EMPTY` | `@choice` is provably empty after compile-time constant folding. |
 | `E_STORY_UNTERMINATED_PATH` | A reachable `#STORY` path can fall through without `@choice`, `@jump`, or `@end`. |
@@ -289,6 +296,9 @@ Diagnostic code naming:
 | `R_ASSET_LOAD_FAILED` | Asset exists but fails to load/decode at runtime. |
 | `R_AUDIO_DEVICE_FAILURE` | Audio subsystem/device cannot initialize or play requested sound. |
 | `R_SAVE_STATE_CORRUPT` | Save data is malformed or incompatible with expected schema. |
+| `R_DIVIDE_BY_ZERO` | Division operation attempted with zero divisor at runtime. |
+| `R_MODULO_BY_ZERO` | Modulo operation attempted with zero divisor at runtime. |
+| `R_NUMERIC_OVERFLOW` | Numeric operation overflowed at runtime (for example: integer `abs()` overflow edge case). |
 
 Backward compatibility:
 * `ChoiceExhausted` is retained as a legacy alias for `R_CHOICE_EXHAUSTED`.

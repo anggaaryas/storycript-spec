@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use rand::Rng;
+use rand::RngExt;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
 use storycript_parser::ast::*;
@@ -636,7 +636,7 @@ impl Engine {
                 "/" => {
                     if *b == 0 {
                         self.raise_runtime_error(
-                            "RUNTIME",
+                            "R_DIVIDE_BY_ZERO",
                             "Division by zero is not allowed".to_string(),
                         );
                         return None;
@@ -646,7 +646,7 @@ impl Engine {
                 "%" => {
                     if *b == 0 {
                         self.raise_runtime_error(
-                            "RUNTIME",
+                            "R_MODULO_BY_ZERO",
                             "Modulo by zero is not allowed".to_string(),
                         );
                         return None;
@@ -701,7 +701,10 @@ impl Engine {
         };
 
         if op == "/" && r == Decimal::ZERO {
-            self.raise_runtime_error("RUNTIME", "Division by zero is not allowed".to_string());
+            self.raise_runtime_error(
+                "R_DIVIDE_BY_ZERO",
+                "Division by zero is not allowed".to_string(),
+            );
             return None;
         }
 
@@ -820,7 +823,7 @@ impl Engine {
                             Some(Value::Int(abs))
                         } else {
                             self.raise_runtime_error(
-                                "RUNTIME",
+                                "R_NUMERIC_OVERFLOW",
                                 "abs() overflow for integer minimum value".to_string(),
                             );
                             None
