@@ -50,6 +50,7 @@ pub enum Token {
     TypeString,
     TypeBoolean,
     TypeDecimal,
+    TypeArray,
     Stop, // STOP (for @bgm STOP)
 
     // Operators
@@ -111,6 +112,7 @@ impl Token {
             Token::TypeString => "'string'",
             Token::TypeBoolean => "'boolean'",
             Token::TypeDecimal => "'decimal'",
+            Token::TypeArray => "'array'",
             Token::Stop => "'STOP'",
             Token::Eq => "'='",
             Token::EqEq => "'=='",

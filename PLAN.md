@@ -13,7 +13,7 @@ Before any scenes are parsed, the engine must define global variables, load acto
 
 **Typed Variable Declaration:**
 * Syntax: `$name as <type> = <expr>`
-* Supported `<type>`: `integer`, `string`, `boolean`, `decimal`
+* Supported `<type>`: `integer`, `string`, `boolean`, `decimal`, `array<integer|string|boolean|decimal>`
 * Variable type is immutable after declaration.
 
 ```plaintext
@@ -87,7 +87,7 @@ A standard scene is defined using `* <scene_label> { ... }`. Every scene operate
 ### Phase 1: `#PREP` (Execution Phase)
 The invisible backend phase. The parser executes all math, updates state arrays, and queues engine assets instantly before rendering anything to the screen. 
 
-* **Allowed Tokens:** `$`, `@bg`, `@bgm`, `@sfx`, `if`/`else if`/`else`.
+* **Allowed Tokens:** `$`, `@bg`, `@bgm`, `@sfx`, standalone function calls (`name(...)`), `if`/`else if`/`else`.
 * **Variable Declaration:** Typed local declarations are allowed only in `#PREP` (`$name as <type> = <expr>`).
 * **Forbidden Tokens:** `"Narrative text"`, `ActorID()`, standalone STORY output (`$var`), `@choice`, `@jump`, `@end`.
 
@@ -154,6 +154,15 @@ Execution semantics:
 * Mixed integer/decimal arithmetic returns decimal.
 * `%` (modulo) is valid only for integer operands.
 
+**Array Type and Literals:**
+* Array type syntax: `array<scalar_type>` where `scalar_type` is one of `integer`, `string`, `boolean`, `decimal`.
+* Nested arrays are not supported.
+* Array literal syntax: `[value_1, value_2, ...]`.
+* Empty array literal `[]` is valid only when target array type is known from context.
+* Array literal elements must resolve to one scalar element type (mixed integer/decimal literals infer decimal element type).
+* Array arguments in collection functions must be either `$variable` or array literal.
+* Scalar arguments (`value`, `index`, `count`, `string_separator`) in collection functions must be either literals or `$variable`.
+
 **Built-in Functions:**
 * `abs(x)`:
     * Requires exactly one numeric argument.
@@ -168,10 +177,48 @@ Execution semantics:
     * Inclusive bounds (`[min, max]`).
     * Integer target requires integer bounds.
     * Decimal target accepts integer or decimal bounds (integer bounds widen to decimal).
-* `pick([candidate_1, candidate_2, ...])`:
-    * Requires non-empty list literal argument.
-    * In decimal assignment context, integer and decimal candidates are allowed (integer widens to decimal).
-    * In other contexts, candidates must be type-compatible with usage context.
+* `pick(array)`:
+    * Requires one non-empty array argument.
+    * Returns one random element from the array.
+* `pick(count, array)`:
+    * `count` must be integer.
+    * Returns `array<type>` with `count` members sampled by unique random index.
+    * `pick(0, array)` returns an empty `array<type>`.
+    * Runtime fails when `count > array_size(array)`.
+* `array_push(array, value)`:
+    * Mutates array by appending value.
+    * Returns void.
+    * Allowed in `#PREP` statement call form only.
+* `array_pop(array)`:
+    * Removes and returns the last array element.
+    * Runtime fails for empty array.
+* `array_strip(array, value)`:
+    * Removes all elements equal to value.
+    * Returns void.
+    * Allowed in `#PREP` statement call form only.
+* `array_clear(array)`:
+    * Removes all elements (result `[]`).
+    * Returns void.
+    * Allowed in `#PREP` statement call form only.
+* `array_contains(array, value)`:
+    * Returns boolean.
+    * For `array<decimal>`, integer probe value is allowed (widened to decimal).
+* `array_size(array)`:
+    * Returns integer array length.
+* `array_join(array, string_separator)`:
+    * Returns string by joining element text with separator.
+* `array_get(array, index)`:
+    * `index` is zero-based integer.
+    * Returns element at index.
+    * Runtime fails when index is out of range.
+* `array_insert(array, index, value)`:
+    * Inserts value at zero-based index.
+    * Returns void.
+    * Allowed in `#PREP` statement call form only.
+    * Runtime fails when index is out of range for insertion.
+* `array_remove(array, index)`:
+    * Removes and returns element at zero-based index.
+    * Runtime fails when index is out of range.
 
 ```plaintext
 if ($system_stability <= 30) {
@@ -312,7 +359,16 @@ The compiler must fail the script when any of the following is true:
 * Any `abs()` call uses non-numeric argument or wrong arity.
 * Any `rand()`/`rand(min,max)` call is used without typed assignment context.
 * Any `rand(min,max)` call has incompatible bound types for assignment target type.
-* Any `pick()` call has wrong arity, non-list argument, or empty list.
+* Any `array<type>` declaration uses unsupported element type.
+* Any empty array literal `[]` appears without inferable target array type.
+* Any array literal contains mixed incompatible element types.
+* Any nested array literal appears.
+* Any collection function scalar argument (`value`, `index`, `count`, `string_separator`) is not a literal or `$variable`.
+* Any collection function array argument is not `$variable` or array literal.
+* Any collection function argument type is incompatible with function contract.
+* Any void collection function (`array_push`, `array_strip`, `array_clear`, `array_insert`) is used in expression context.
+* Any mutating collection function is used in `#STORY`.
+* Any `pick()` call has wrong arity, invalid argument shape/type, or empty one-argument literal.
 * Any condition expression (`if`, `else if`, `@choice if`) is not boolean.
 * Any `else if` branch that does not follow `else if (<expr>) { ... }` syntax.
 * Any interpolation placeholder is malformed (for example: `${`, `${}`, `${1bad}`, `${name`).
@@ -400,6 +456,22 @@ Diagnostic code naming:
 | `INC007` | Child REQUIRE emotion key is absent in root actor portrait map. | `E_REQUIRE_EMOTION_MISSING` | Child portrait-form dialogue dependency must be guaranteed at compile-time. |
 | `INC008` | Child REQUIRE declaration includes initializer value. | `E_SYNTAX` | REQUIRE blocks describe dependency contracts, not runtime initialization. |
 
+#### Array Collection Diagnostic Mapping
+| Rule ID | Validation Condition | Diagnostic Code | Rationale |
+| :--- | :--- | :--- | :--- |
+| `ARR001` | Scalar argument source for `value`/`index`/`count`/`string_separator` is not literal or `$variable`. | `E_FUNCTION_ARGUMENT_INVALID` | Restricts collection scalar arguments to deterministic source shapes. |
+| `ARR002` | Array argument source is not `$variable` or array literal. | `E_FUNCTION_ARGUMENT_INVALID` | Prevents unsupported expression-shape array arguments. |
+| `ARR003` | Argument shape is valid but inferred type is incompatible with function contract. | `E_FUNCTION_ARGUMENT_INVALID` | Keeps type failures explicit at function boundary. |
+| `ARR004` | Empty array literal `[]` appears without inferable target array type context. | `E_FUNCTION_CONTEXT_INVALID` | Empty literals need contextual type to resolve element type. |
+| `ARR005` | Mutating collection call is used in `#STORY`. | `E_FUNCTION_CONTEXT_INVALID` | Preserves `#STORY` read-only mutation model. |
+| `ARR006` | `pick(count, array)` count argument is not integer. | `E_FUNCTION_ARGUMENT_INVALID` | Count semantics require integer cardinality. |
+| `ARR007` | `array_get`/`array_insert`/`array_remove` index argument is not integer. | `E_FUNCTION_ARGUMENT_INVALID` | Index semantics are zero-based integer only. |
+| `ARR008` | `array_join(array, string_separator)` separator argument is not string. | `E_FUNCTION_ARGUMENT_INVALID` | Join separator contract is string-only. |
+| `ARR009` | `array_contains(array<decimal>, value)` receives non-numeric value. | `E_FUNCTION_ARGUMENT_INVALID` | Decimal arrays support integer widening but still require numeric probe. |
+| `ARR010` | Runtime `pick(count, array)` receives count greater than array size (or negative). | `R_ARRAY_SAMPLE_COUNT_INVALID` | Sampling cardinality cannot exceed available members. |
+| `ARR011` | Runtime array index operation is outside valid bounds. | `R_ARRAY_INDEX_OUT_OF_RANGE` | Ensures deterministic failure for invalid index access. |
+| `ARR012` | Runtime pop/get/remove operation requires element but array is empty. | `R_ARRAY_EMPTY` | Empty-collection element access/removal is invalid. |
+
 #### Compile-Time Warnings
 | Code | Trigger |
 | :--- | :--- |
@@ -416,6 +488,9 @@ Diagnostic code naming:
 | `R_DIVIDE_BY_ZERO` | Division operation attempted with zero divisor at runtime. |
 | `R_MODULO_BY_ZERO` | Modulo operation attempted with zero divisor at runtime. |
 | `R_NUMERIC_OVERFLOW` | Numeric operation overflowed at runtime (for example: integer `abs()` overflow edge case). |
+| `R_ARRAY_EMPTY` | Array operation requires at least one element but array is empty at runtime. |
+| `R_ARRAY_INDEX_OUT_OF_RANGE` | Array index operation used index outside valid bounds at runtime. |
+| `R_ARRAY_SAMPLE_COUNT_INVALID` | `pick(count, array)` requested count is negative or larger than array size at runtime. |
 
 Backward compatibility:
 * `ChoiceExhausted` is retained as a legacy alias for `R_CHOICE_EXHAUSTED`.

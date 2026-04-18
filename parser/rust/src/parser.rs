@@ -594,6 +594,45 @@ impl Parser {
     }
 
     fn parse_var_type(&mut self, scene: &str) -> Option<VarType> {
+        if self.peek() == &Token::TypeArray {
+            let (line, column) = self.current_span();
+            self.advance();
+
+            if !self.expect(&Token::Lt) {
+                return None;
+            }
+
+            let scalar_type = self.parse_scalar_var_type(scene, "array element type")?;
+
+            if !self.expect(&Token::Gt) {
+                return None;
+            }
+
+            let array_type = match scalar_type {
+                VarType::Integer => VarType::ArrayInteger,
+                VarType::String => VarType::ArrayString,
+                VarType::Boolean => VarType::ArrayBoolean,
+                VarType::Decimal => VarType::ArrayDecimal,
+                _ => {
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::ESyntax,
+                        "array<type> supports only scalar element types (integer, string, boolean, decimal)",
+                        Phase::Parse,
+                        scene,
+                        line,
+                        column,
+                    ));
+                    return None;
+                }
+            };
+
+            return Some(array_type);
+        }
+
+        self.parse_scalar_var_type(scene, "variable type")
+    }
+
+    fn parse_scalar_var_type(&mut self, scene: &str, context: &str) -> Option<VarType> {
         let (line, column) = self.current_span();
         let var_type = match self.peek() {
             Token::TypeInteger => VarType::Integer,
@@ -604,7 +643,8 @@ impl Parser {
                 self.diagnostics.push(Diagnostic::new(
                     DiagnosticCode::ESyntax,
                     format!(
-                        "Expected variable type (integer, string, boolean, decimal), found {}",
+                        "Expected {} (integer, string, boolean, decimal), found {}",
+                        context,
                         self.peek().name()
                     ),
                     Phase::Parse,
@@ -949,6 +989,7 @@ impl Parser {
                     None
                 }
             }
+            Token::Ident(_) => self.parse_prep_call_statement(scene),
             _ => {
                 let (l, c) = self.current_span();
                 self.diagnostics.push(Diagnostic::new(
@@ -962,6 +1003,47 @@ impl Parser {
                 None
             }
         }
+    }
+
+    fn parse_prep_call_statement(&mut self, _scene: &str) -> Option<PrepStatement> {
+        let (line, column) = self.current_span();
+        let name = if let Token::Ident(name) = self.peek().clone() {
+            self.advance();
+            name
+        } else {
+            return None;
+        };
+
+        if !self.expect(&Token::LParen) {
+            return None;
+        }
+
+        let mut args = Vec::new();
+        if self.peek() != &Token::RParen {
+            loop {
+                let arg = self.parse_expression()?;
+                args.push(arg);
+
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if !self.expect(&Token::RParen) {
+            return None;
+        }
+
+        self.eat_optional_semicolon();
+
+        Some(PrepStatement::Call {
+            name,
+            args,
+            line,
+            column,
+        })
     }
 
     fn parse_var_assign(&mut self, scene: &str) -> Option<VarAssign> {

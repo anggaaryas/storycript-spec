@@ -16,6 +16,10 @@ pub enum Value {
     Decimal(Decimal),
     Bool(bool),
     Str(String),
+    Array {
+        items: Vec<Value>,
+        element_type: VarType,
+    },
 }
 
 impl std::fmt::Display for Value {
@@ -25,6 +29,13 @@ impl std::fmt::Display for Value {
             Value::Decimal(n) => write!(f, "{}", n),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Str(s) => write!(f, "\"{}\"", s),
+            Value::Array {
+                items,
+                element_type: _,
+            } => {
+                let rendered: Vec<String> = items.iter().map(value_to_plain_text).collect();
+                write!(f, "[{}]", rendered.join(", "))
+            }
         }
     }
 }
@@ -78,6 +89,12 @@ enum InternalEvent {
     Choices(Vec<ChoiceDisplay>),
     Jump(String),
     End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallMode {
+    Expression,
+    Statement,
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +389,12 @@ impl Engine {
                                     };
                                     self.write_variable(&assign.name, updated);
                                 }
-                                VarType::String | VarType::Boolean => {
+                                VarType::String
+                                | VarType::Boolean
+                                | VarType::ArrayInteger
+                                | VarType::ArrayString
+                                | VarType::ArrayBoolean
+                                | VarType::ArrayDecimal => {
                                     self.raise_runtime_error(
                                         "RUNTIME",
                                         format!(
@@ -390,6 +412,19 @@ impl Engine {
                                 }
                             }
                         }
+                    }
+                }
+                PrepStatement::Call {
+                    name,
+                    args,
+                    line,
+                    column,
+                } => {
+                    if self
+                        .eval_call(name, args, *line, *column, None, CallMode::Statement)
+                        .is_none()
+                    {
+                        return false;
                     }
                 }
                 PrepStatement::IfElse(if_else) => {
@@ -627,14 +662,15 @@ impl Engine {
                 args,
                 line,
                 column,
-            } => self.eval_call(name, args, *line, *column, assignment_target),
-            Expr::ListLit { .. } => {
-                self.raise_runtime_error(
-                    "RUNTIME",
-                    "List literals are only valid as pick([ ... ]) arguments".to_string(),
-                );
-                None
-            }
+            } => self.eval_call(
+                name,
+                args,
+                *line,
+                *column,
+                assignment_target,
+                CallMode::Expression,
+            ),
+            Expr::ListLit { items, .. } => self.eval_array_literal(items, assignment_target),
             Expr::BinOp { left, op, right } => {
                 let l = self.eval_expr(left, assignment_target)?;
                 let r = self.eval_expr(right, assignment_target)?;
@@ -842,6 +878,230 @@ impl Engine {
         Some(Value::Bool(f(l, r)))
     }
 
+    fn eval_array_literal(
+        &mut self,
+        items: &[Expr],
+        assignment_target: Option<VarType>,
+    ) -> Option<Value> {
+        let expected_element = assignment_target.and_then(array_element_type);
+
+        if items.is_empty() {
+            if let Some(element_type) = expected_element {
+                return Some(Value::Array {
+                    items: Vec::new(),
+                    element_type,
+                });
+            }
+
+            self.raise_runtime_error(
+                "RUNTIME",
+                "Empty array literal [] requires known target array type context".to_string(),
+            );
+            return None;
+        }
+
+        let mut evaluated = Vec::with_capacity(items.len());
+
+        if let Some(element_type) = expected_element {
+            for item in items {
+                let raw = self.eval_expr(item, Some(element_type))?;
+                let coerced = match coerce_value_for_type(raw, element_type) {
+                    Some(value) => value,
+                    None => {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "Array literal element is incompatible with {}",
+                                type_name(element_type)
+                            ),
+                        );
+                        return None;
+                    }
+                };
+                evaluated.push(coerced);
+            }
+
+            return Some(Value::Array {
+                items: evaluated,
+                element_type,
+            });
+        }
+
+        let mut inferred_element: Option<VarType> = None;
+        for item in items {
+            let value = self.eval_expr(item, None)?;
+            let value_ty = value_type(&value);
+
+            if is_array_type(value_ty) {
+                self.raise_runtime_error(
+                    "RUNTIME",
+                    "Nested arrays are not supported".to_string(),
+                );
+                return None;
+            }
+
+            match inferred_element {
+                None => {
+                    inferred_element = Some(value_ty);
+                    evaluated.push(value);
+                }
+                Some(current) if current == value_ty => {
+                    evaluated.push(value);
+                }
+                Some(current) if is_numeric_type(current) && is_numeric_type(value_ty) => {
+                    if current == VarType::Integer {
+                        for existing in &mut evaluated {
+                            if let Value::Int(n) = existing {
+                                *existing = Value::Decimal(Decimal::from(*n));
+                            }
+                        }
+                        inferred_element = Some(VarType::Decimal);
+                    }
+
+                    match value {
+                        Value::Int(n) => evaluated.push(Value::Decimal(Decimal::from(n))),
+                        Value::Decimal(n) => evaluated.push(Value::Decimal(n)),
+                        _ => unreachable!(),
+                    }
+                }
+                Some(current) => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "Array literal elements must share one scalar type, found {} and {}",
+                            type_name(current),
+                            type_name(value_ty)
+                        ),
+                    );
+                    return None;
+                }
+            }
+        }
+
+        let element_type = inferred_element.expect("non-empty array literal has inferred element");
+        Some(Value::Array {
+            items: evaluated,
+            element_type,
+        })
+    }
+
+    fn eval_array_argument(
+        &mut self,
+        expr: &Expr,
+        assignment_target_hint: Option<VarType>,
+        function_name: &str,
+    ) -> Option<(Vec<Value>, VarType, Option<String>)> {
+        match expr {
+            Expr::VarRef { name, .. } => match self.resolve_var_value(name).cloned() {
+                Some(Value::Array {
+                    items,
+                    element_type,
+                }) => Some((items, element_type, Some(name.clone()))),
+                Some(other) => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "{}() expected array argument, got {}",
+                            function_name,
+                            type_name(value_type(&other))
+                        ),
+                    );
+                    None
+                }
+                None => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("Read of undeclared variable '${}'", name),
+                    );
+                    None
+                }
+            },
+            Expr::ListLit { items, .. } => match self.eval_array_literal(items, assignment_target_hint)
+            {
+                Some(Value::Array {
+                    items,
+                    element_type,
+                }) => Some((items, element_type, None)),
+                Some(_) => {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("{}() expected array literal argument", function_name),
+                    );
+                    None
+                }
+                None => None,
+            },
+            _ => {
+                self.raise_runtime_error(
+                    "RUNTIME",
+                    format!(
+                        "{}() array argument must be a $variable or array literal",
+                        function_name
+                    ),
+                );
+                None
+            }
+        }
+    }
+
+    fn eval_scalar_argument(
+        &mut self,
+        expr: &Expr,
+        assignment_target: Option<VarType>,
+        function_name: &str,
+        argument_name: &str,
+    ) -> Option<Value> {
+        if !matches!(
+            expr,
+            Expr::IntLit(_)
+                | Expr::DecimalLit(_)
+                | Expr::BoolLit(_)
+                | Expr::StringLit(_)
+                | Expr::VarRef { .. }
+        ) {
+            self.raise_runtime_error(
+                "RUNTIME",
+                format!(
+                    "{}() {} argument must be a literal or $variable",
+                    function_name, argument_name
+                ),
+            );
+            return None;
+        }
+
+        let value = self.eval_expr(expr, assignment_target)?;
+        if is_array_type(value_type(&value)) {
+            self.raise_runtime_error(
+                "RUNTIME",
+                format!(
+                    "{}() {} argument must be scalar",
+                    function_name, argument_name
+                ),
+            );
+            return None;
+        }
+
+        Some(value)
+    }
+
+    fn eval_integer_argument(&mut self, expr: &Expr, function_name: &str) -> Option<i64> {
+        let value = self.eval_scalar_argument(expr, Some(VarType::Integer), function_name, "index")?;
+        match value {
+            Value::Int(n) => Some(n),
+            other => {
+                self.raise_runtime_error(
+                    "RUNTIME",
+                    format!(
+                        "{}() requires integer argument, got {}",
+                        function_name,
+                        type_name(value_type(&other))
+                    ),
+                );
+                None
+            }
+        }
+    }
+
     fn eval_call(
         &mut self,
         name: &str,
@@ -849,6 +1109,7 @@ impl Engine {
         _line: usize,
         _column: usize,
         assignment_target: Option<VarType>,
+        mode: CallMode,
     ) -> Option<Value> {
         match name {
             "abs" => {
@@ -1036,71 +1297,474 @@ impl Engine {
                 }
             }
             "pick" => {
-                if args.len() != 1 {
+                if args.len() == 1 {
+                    let (items, _element_type, _) = self.eval_array_argument(&args[0], None, "pick")?;
+                    if items.is_empty() {
+                        self.raise_runtime_error(
+                            "R_ARRAY_EMPTY",
+                            "pick() requires non-empty array".to_string(),
+                        );
+                        return None;
+                    }
+
+                    let index = rand::rng().random_range(0..items.len());
+                    return Some(items[index].clone());
+                }
+
+                if args.len() != 2 {
                     self.raise_runtime_error(
                         "RUNTIME",
-                        format!("pick() expects exactly 1 argument, found {}", args.len()),
+                        format!("pick() expects 1 or 2 arguments, found {}", args.len()),
                     );
                     return None;
                 }
 
-                let items = match &args[0] {
-                    Expr::ListLit { items, .. } => items,
-                    _ => {
+                let count_value = self.eval_scalar_argument(
+                    &args[0],
+                    Some(VarType::Integer),
+                    "pick",
+                    "count",
+                )?;
+                let count = match count_value {
+                    Value::Int(n) if n >= 0 => n as usize,
+                    Value::Int(_) => {
+                        self.raise_runtime_error(
+                            "R_ARRAY_SAMPLE_COUNT_INVALID",
+                            "pick(count, array) requires count >= 0".to_string(),
+                        );
+                        return None;
+                    }
+                    other => {
                         self.raise_runtime_error(
                             "RUNTIME",
-                            "pick() expects list literal argument: pick([a, b, ...])"
-                                .to_string(),
+                            format!(
+                                "pick(count, array) requires integer count, got {}",
+                                type_name(value_type(&other))
+                            ),
                         );
                         return None;
                     }
                 };
 
-                if items.is_empty() {
+                let hint = assignment_target.filter(|ty| is_array_type(*ty));
+                let (items, element_type, _) = self.eval_array_argument(&args[1], hint, "pick")?;
+
+                if count > items.len() {
                     self.raise_runtime_error(
-                        "RUNTIME",
-                        "pick() requires a non-empty candidate list".to_string(),
+                        "R_ARRAY_SAMPLE_COUNT_INVALID",
+                        format!(
+                            "pick(count, array) requires count <= array_size (count={}, size={})",
+                            count,
+                            items.len()
+                        ),
                     );
                     return None;
                 }
 
-                let mut evaluated: Vec<Value> = Vec::with_capacity(items.len());
-                for item in items {
-                    let mut value = self.eval_expr(item, assignment_target)?;
-
-                    if let Some(target) = assignment_target {
-                        value = match coerce_value_for_type(value, target) {
-                            Some(v) => v,
-                            None => {
-                                self.raise_runtime_error(
-                                    "RUNTIME",
-                                    format!(
-                                        "pick() candidate is incompatible with assignment target {}",
-                                        type_name(target)
-                                    ),
-                                );
-                                return None;
-                            }
-                        };
-                    }
-
-                    evaluated.push(value);
+                if count == 0 {
+                    return Some(Value::Array {
+                        items: Vec::new(),
+                        element_type,
+                    });
                 }
 
-                if assignment_target.is_none() {
-                    let first_type = value_type(&evaluated[0]);
-                    if evaluated.iter().skip(1).any(|v| value_type(v) != first_type) {
+                let mut pool: Vec<usize> = (0..items.len()).collect();
+                let mut selected = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let random_index = rand::rng().random_range(0..pool.len());
+                    let source_index = pool.swap_remove(random_index);
+                    selected.push(items[source_index].clone());
+                }
+
+                Some(Value::Array {
+                    items: selected,
+                    element_type,
+                })
+            }
+            "array_push" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_push() expects exactly 2 arguments, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                if mode == CallMode::Expression {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "array_push() returns void and cannot be used as an expression".to_string(),
+                    );
+                    return None;
+                }
+
+                let (mut items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_push")?;
+                let value = self.eval_scalar_argument(
+                    &args[1],
+                    Some(element_type),
+                    "array_push",
+                    "value",
+                )?;
+                let coerced = match coerce_value_for_type(value, element_type) {
+                    Some(v) => v,
+                    None => {
                         self.raise_runtime_error(
                             "RUNTIME",
-                            "pick() candidates must share one type outside assignment context"
-                                .to_string(),
+                            format!(
+                                "array_push() value is incompatible with {}",
+                                type_name(element_type)
+                            ),
                         );
                         return None;
                     }
+                };
+                items.push(coerced);
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items,
+                            element_type,
+                        },
+                    );
                 }
 
-                let index = rand::rng().random_range(0..evaluated.len());
-                Some(evaluated[index].clone())
+                Some(Value::Bool(true))
+            }
+            "array_pop" => {
+                if args.len() != 1 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_pop() expects exactly 1 argument, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                let (mut items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_pop")?;
+                let popped = match items.pop() {
+                    Some(value) => value,
+                    None => {
+                        self.raise_runtime_error(
+                            "R_ARRAY_EMPTY",
+                            "array_pop() requires non-empty array".to_string(),
+                        );
+                        return None;
+                    }
+                };
+
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items,
+                            element_type,
+                        },
+                    );
+                }
+
+                Some(popped)
+            }
+            "array_strip" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_strip() expects exactly 2 arguments, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                if mode == CallMode::Expression {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "array_strip() returns void and cannot be used as an expression".to_string(),
+                    );
+                    return None;
+                }
+
+                let (mut items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_strip")?;
+                let raw_value = self.eval_scalar_argument(
+                    &args[1],
+                    Some(element_type),
+                    "array_strip",
+                    "value",
+                )?;
+                let probe = match coerce_value_for_type(raw_value, element_type) {
+                    Some(v) => v,
+                    None => {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "array_strip() value is incompatible with {}",
+                                type_name(element_type)
+                            ),
+                        );
+                        return None;
+                    }
+                };
+                items.retain(|item| item != &probe);
+
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items,
+                            element_type,
+                        },
+                    );
+                }
+
+                Some(Value::Bool(true))
+            }
+            "array_clear" => {
+                if args.len() != 1 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_clear() expects exactly 1 argument, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                if mode == CallMode::Expression {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "array_clear() returns void and cannot be used as an expression".to_string(),
+                    );
+                    return None;
+                }
+
+                let (_items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_clear")?;
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items: Vec::new(),
+                            element_type,
+                        },
+                    );
+                }
+
+                Some(Value::Bool(true))
+            }
+            "array_contains" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "array_contains() expects exactly 2 arguments, found {}",
+                            args.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                let (items, element_type, _) =
+                    self.eval_array_argument(&args[0], None, "array_contains")?;
+                let raw_value = self.eval_scalar_argument(
+                    &args[1],
+                    Some(element_type),
+                    "array_contains",
+                    "value",
+                )?;
+                let probe = match coerce_value_for_type(raw_value, element_type) {
+                    Some(v) => v,
+                    None => {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "array_contains() value is incompatible with {}",
+                                type_name(element_type)
+                            ),
+                        );
+                        return None;
+                    }
+                };
+
+                Some(Value::Bool(items.iter().any(|item| item == &probe)))
+            }
+            "array_size" => {
+                if args.len() != 1 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_size() expects exactly 1 argument, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                let (items, _element_type, _) =
+                    self.eval_array_argument(&args[0], None, "array_size")?;
+                Some(Value::Int(items.len() as i64))
+            }
+            "array_join" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_join() expects exactly 2 arguments, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                let (items, _element_type, _) =
+                    self.eval_array_argument(&args[0], None, "array_join")?;
+                let separator = self.eval_scalar_argument(
+                    &args[1],
+                    Some(VarType::String),
+                    "array_join",
+                    "separator",
+                )?;
+                let separator = match separator {
+                    Value::Str(s) => s,
+                    other => {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "array_join() separator must be string, got {}",
+                                type_name(value_type(&other))
+                            ),
+                        );
+                        return None;
+                    }
+                };
+
+                let parts: Vec<String> = items.iter().map(Self::value_to_plain_text).collect();
+                Some(Value::Str(parts.join(&separator)))
+            }
+            "array_get" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!("array_get() expects exactly 2 arguments, found {}", args.len()),
+                    );
+                    return None;
+                }
+
+                let (items, _element_type, _) = self.eval_array_argument(&args[0], None, "array_get")?;
+                let index = self.eval_integer_argument(&args[1], "array_get")?;
+                if index < 0 || (index as usize) >= items.len() {
+                    self.raise_runtime_error(
+                        "R_ARRAY_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "array_get() index {} out of range for size {}",
+                            index,
+                            items.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                Some(items[index as usize].clone())
+            }
+            "array_insert" => {
+                if args.len() != 3 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "array_insert() expects exactly 3 arguments, found {}",
+                            args.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                if mode == CallMode::Expression {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        "array_insert() returns void and cannot be used as an expression"
+                            .to_string(),
+                    );
+                    return None;
+                }
+
+                let (mut items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_insert")?;
+                let index = self.eval_integer_argument(&args[1], "array_insert")?;
+                if index < 0 || (index as usize) > items.len() {
+                    self.raise_runtime_error(
+                        "R_ARRAY_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "array_insert() index {} out of range for size {}",
+                            index,
+                            items.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                let value = self.eval_scalar_argument(
+                    &args[2],
+                    Some(element_type),
+                    "array_insert",
+                    "value",
+                )?;
+                let coerced = match coerce_value_for_type(value, element_type) {
+                    Some(v) => v,
+                    None => {
+                        self.raise_runtime_error(
+                            "RUNTIME",
+                            format!(
+                                "array_insert() value is incompatible with {}",
+                                type_name(element_type)
+                            ),
+                        );
+                        return None;
+                    }
+                };
+
+                items.insert(index as usize, coerced);
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items,
+                            element_type,
+                        },
+                    );
+                }
+
+                Some(Value::Bool(true))
+            }
+            "array_remove" => {
+                if args.len() != 2 {
+                    self.raise_runtime_error(
+                        "RUNTIME",
+                        format!(
+                            "array_remove() expects exactly 2 arguments, found {}",
+                            args.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                let (mut items, element_type, target_name) =
+                    self.eval_array_argument(&args[0], None, "array_remove")?;
+                let index = self.eval_integer_argument(&args[1], "array_remove")?;
+                if index < 0 || (index as usize) >= items.len() {
+                    self.raise_runtime_error(
+                        "R_ARRAY_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "array_remove() index {} out of range for size {}",
+                            index,
+                            items.len()
+                        ),
+                    );
+                    return None;
+                }
+
+                let removed = items.remove(index as usize);
+                if let Some(name) = target_name {
+                    self.write_variable(
+                        &name,
+                        Value::Array {
+                            items,
+                            element_type,
+                        },
+                    );
+                }
+
+                Some(removed)
             }
             _ => {
                 self.raise_runtime_error("RUNTIME", format!("Unknown function '{}'", name));
@@ -1154,6 +1818,13 @@ impl Engine {
             Value::Decimal(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.clone(),
+            Value::Array {
+                items,
+                element_type: _,
+            } => {
+                let rendered: Vec<String> = items.iter().map(Self::value_to_plain_text).collect();
+                format!("[{}]", rendered.join(", "))
+            }
         }
     }
 
@@ -1186,7 +1857,7 @@ fn eval_init_expr(
         }
         Expr::VarRef { name, .. } => vars.get(name).cloned(),
         Expr::Call { name, args, .. } => eval_init_call(name, args, vars, assignment_target),
-        Expr::ListLit { .. } => None,
+        Expr::ListLit { items, .. } => eval_init_array_literal(items, vars, assignment_target),
         Expr::BinOp { left, op, right } => {
             let l = eval_init_expr(left, vars, assignment_target)?;
             let r = eval_init_expr(right, vars, assignment_target)?;
@@ -1249,6 +1920,130 @@ fn eval_init_numeric_binop(op: &str, left: Value, right: Value) -> Option<Value>
     };
 
     Some(Value::Decimal(result))
+}
+
+fn eval_init_array_literal(
+    items: &[Expr],
+    vars: &HashMap<String, Value>,
+    assignment_target: Option<VarType>,
+) -> Option<Value> {
+    let expected_element = assignment_target.and_then(array_element_type);
+
+    if items.is_empty() {
+        if let Some(element_type) = expected_element {
+            return Some(Value::Array {
+                items: Vec::new(),
+                element_type,
+            });
+        }
+        return None;
+    }
+
+    let mut evaluated = Vec::with_capacity(items.len());
+
+    if let Some(element_type) = expected_element {
+        for item in items {
+            let value = eval_init_expr(item, vars, Some(element_type))?;
+            let coerced = coerce_value_for_type(value, element_type)?;
+            evaluated.push(coerced);
+        }
+        return Some(Value::Array {
+            items: evaluated,
+            element_type,
+        });
+    }
+
+    let mut inferred_element: Option<VarType> = None;
+    for item in items {
+        let value = eval_init_expr(item, vars, None)?;
+        let value_ty = value_type(&value);
+        if is_array_type(value_ty) {
+            return None;
+        }
+
+        match inferred_element {
+            None => {
+                inferred_element = Some(value_ty);
+                evaluated.push(value);
+            }
+            Some(current) if current == value_ty => {
+                evaluated.push(value);
+            }
+            Some(current) if is_numeric_type(current) && is_numeric_type(value_ty) => {
+                if current == VarType::Integer {
+                    for existing in &mut evaluated {
+                        if let Value::Int(n) = existing {
+                            *existing = Value::Decimal(Decimal::from(*n));
+                        }
+                    }
+                    inferred_element = Some(VarType::Decimal);
+                }
+
+                match value {
+                    Value::Int(n) => evaluated.push(Value::Decimal(Decimal::from(n))),
+                    Value::Decimal(n) => evaluated.push(Value::Decimal(n)),
+                    _ => return None,
+                }
+            }
+            Some(_) => return None,
+        }
+    }
+
+    Some(Value::Array {
+        items: evaluated,
+        element_type: inferred_element?,
+    })
+}
+
+fn eval_init_array_argument(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    assignment_target_hint: Option<VarType>,
+) -> Option<(Vec<Value>, VarType)> {
+    match expr {
+        Expr::VarRef { name, .. } => match vars.get(name)? {
+            Value::Array {
+                items,
+                element_type,
+            } => Some((items.clone(), *element_type)),
+            _ => None,
+        },
+        Expr::ListLit { items, .. } => {
+            let value = eval_init_array_literal(items, vars, assignment_target_hint)?;
+            match value {
+                Value::Array {
+                    items,
+                    element_type,
+                } => Some((items, element_type)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn eval_init_scalar_argument(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    assignment_target: Option<VarType>,
+) -> Option<Value> {
+    if !matches!(
+        expr,
+        Expr::IntLit(_)
+            | Expr::DecimalLit(_)
+            | Expr::BoolLit(_)
+            | Expr::StringLit(_)
+            | Expr::VarRef { .. }
+    ) {
+        return None;
+    }
+
+    let value = eval_init_expr(expr, vars, assignment_target)?;
+    if is_array_type(value_type(&value)) {
+        return None;
+    }
+
+    Some(value)
 }
 
 fn eval_init_call(
@@ -1315,39 +2110,136 @@ fn eval_init_call(
             }
         }
         "pick" => {
+            if args.len() == 1 {
+                let (items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+                if items.is_empty() {
+                    return None;
+                }
+
+                let index = rand::rng().random_range(0..items.len());
+                return Some(items[index].clone());
+            }
+
+            if args.len() != 2 {
+                return None;
+            }
+
+            let count = match eval_init_scalar_argument(
+                &args[0],
+                vars,
+                Some(VarType::Integer),
+            )? {
+                Value::Int(n) if n >= 0 => n as usize,
+                _ => return None,
+            };
+
+            let hint = assignment_target.filter(|ty| is_array_type(*ty));
+            let (items, element_type) = eval_init_array_argument(&args[1], vars, hint)?;
+            if count > items.len() {
+                return None;
+            }
+
+            if count == 0 {
+                return Some(Value::Array {
+                    items: Vec::new(),
+                    element_type,
+                });
+            }
+
+            let mut pool: Vec<usize> = (0..items.len()).collect();
+            let mut selected = Vec::with_capacity(count);
+            for _ in 0..count {
+                let random_index = rand::rng().random_range(0..pool.len());
+                let source_index = pool.swap_remove(random_index);
+                selected.push(items[source_index].clone());
+            }
+
+            Some(Value::Array {
+                items: selected,
+                element_type,
+            })
+        }
+        "array_push" | "array_strip" | "array_clear" | "array_insert" => None,
+        "array_pop" => {
             if args.len() != 1 {
                 return None;
             }
 
-            let items = match &args[0] {
-                Expr::ListLit { items, .. } => items,
-                _ => return None,
-            };
-
-            if items.is_empty() {
+            let (mut items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            items.pop()
+        }
+        "array_contains" => {
+            if args.len() != 2 {
                 return None;
             }
 
-            let mut values = Vec::with_capacity(items.len());
-            for item in items {
-                let mut value = eval_init_expr(item, vars, assignment_target)?;
-
-                if let Some(target) = assignment_target {
-                    value = coerce_value_for_type(value, target)?;
-                }
-
-                values.push(value);
+            let (items, element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            let probe = eval_init_scalar_argument(&args[1], vars, Some(element_type))?;
+            let probe = coerce_value_for_type(probe, element_type)?;
+            Some(Value::Bool(items.iter().any(|item| item == &probe)))
+        }
+        "array_size" => {
+            if args.len() != 1 {
+                return None;
             }
 
-            if assignment_target.is_none() {
-                let first = value_type(&values[0]);
-                if values.iter().skip(1).any(|v| value_type(v) != first) {
-                    return None;
-                }
+            let (items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            Some(Value::Int(items.len() as i64))
+        }
+        "array_join" => {
+            if args.len() != 2 {
+                return None;
             }
 
-            let index = rand::rng().random_range(0..values.len());
-            Some(values[index].clone())
+            let (items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            let separator = match eval_init_scalar_argument(
+                &args[1],
+                vars,
+                Some(VarType::String),
+            )? {
+                Value::Str(s) => s,
+                _ => return None,
+            };
+
+            let parts: Vec<String> = items.iter().map(value_to_plain_text).collect();
+            Some(Value::Str(parts.join(&separator)))
+        }
+        "array_get" => {
+            if args.len() != 2 {
+                return None;
+            }
+
+            let (items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            let index = match eval_init_scalar_argument(
+                &args[1],
+                vars,
+                Some(VarType::Integer),
+            )? {
+                Value::Int(n) if n >= 0 => n as usize,
+                _ => return None,
+            };
+
+            items.get(index).cloned()
+        }
+        "array_remove" => {
+            if args.len() != 2 {
+                return None;
+            }
+
+            let (mut items, _element_type) = eval_init_array_argument(&args[0], vars, None)?;
+            let index = match eval_init_scalar_argument(
+                &args[1],
+                vars,
+                Some(VarType::Integer),
+            )? {
+                Value::Int(n) if n >= 0 => n as usize,
+                _ => return None,
+            };
+
+            if index >= items.len() {
+                return None;
+            }
+            Some(items.remove(index))
         }
         _ => None,
     }
@@ -1385,6 +2277,66 @@ fn coerce_value_for_type(value: Value, target_type: VarType) -> Option<Value> {
         (VarType::Boolean, Value::Bool(b)) => Some(Value::Bool(b)),
         (VarType::Decimal, Value::Decimal(n)) => Some(Value::Decimal(n)),
         (VarType::Decimal, Value::Int(n)) => Some(Value::Decimal(Decimal::from(n))),
+        (
+            VarType::ArrayInteger,
+            Value::Array {
+                items,
+                element_type: VarType::Integer,
+            },
+        ) => Some(Value::Array {
+            items,
+            element_type: VarType::Integer,
+        }),
+        (
+            VarType::ArrayString,
+            Value::Array {
+                items,
+                element_type: VarType::String,
+            },
+        ) => Some(Value::Array {
+            items,
+            element_type: VarType::String,
+        }),
+        (
+            VarType::ArrayBoolean,
+            Value::Array {
+                items,
+                element_type: VarType::Boolean,
+            },
+        ) => Some(Value::Array {
+            items,
+            element_type: VarType::Boolean,
+        }),
+        (
+            VarType::ArrayDecimal,
+            Value::Array {
+                items,
+                element_type: VarType::Decimal,
+            },
+        ) => Some(Value::Array {
+            items,
+            element_type: VarType::Decimal,
+        }),
+        (
+            VarType::ArrayDecimal,
+            Value::Array {
+                items,
+                element_type: VarType::Integer,
+            },
+        ) => {
+            let mut converted = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::Int(n) => converted.push(Value::Decimal(Decimal::from(n))),
+                    Value::Decimal(n) => converted.push(Value::Decimal(n)),
+                    _ => return None,
+                }
+            }
+            Some(Value::Array {
+                items: converted,
+                element_type: VarType::Decimal,
+            })
+        }
         _ => None,
     }
 }
@@ -1395,6 +2347,22 @@ fn default_value_for_type(var_type: VarType) -> Value {
         VarType::String => Value::Str(String::new()),
         VarType::Boolean => Value::Bool(false),
         VarType::Decimal => Value::Decimal(Decimal::ZERO),
+        VarType::ArrayInteger => Value::Array {
+            items: Vec::new(),
+            element_type: VarType::Integer,
+        },
+        VarType::ArrayString => Value::Array {
+            items: Vec::new(),
+            element_type: VarType::String,
+        },
+        VarType::ArrayBoolean => Value::Array {
+            items: Vec::new(),
+            element_type: VarType::Boolean,
+        },
+        VarType::ArrayDecimal => Value::Array {
+            items: Vec::new(),
+            element_type: VarType::Decimal,
+        },
     }
 }
 
@@ -1404,6 +2372,10 @@ fn value_type(value: &Value) -> VarType {
         Value::Decimal(_) => VarType::Decimal,
         Value::Bool(_) => VarType::Boolean,
         Value::Str(_) => VarType::String,
+        Value::Array {
+            items: _,
+            element_type,
+        } => array_type_for_element(*element_type).expect("array element type must be scalar"),
     }
 }
 
@@ -1413,7 +2385,45 @@ fn type_name(var_type: VarType) -> &'static str {
         VarType::String => "string",
         VarType::Boolean => "boolean",
         VarType::Decimal => "decimal",
+        VarType::ArrayInteger => "array<integer>",
+        VarType::ArrayString => "array<string>",
+        VarType::ArrayBoolean => "array<boolean>",
+        VarType::ArrayDecimal => "array<decimal>",
     }
+}
+
+fn array_type_for_element(element_type: VarType) -> Option<VarType> {
+    match element_type {
+        VarType::Integer => Some(VarType::ArrayInteger),
+        VarType::String => Some(VarType::ArrayString),
+        VarType::Boolean => Some(VarType::ArrayBoolean),
+        VarType::Decimal => Some(VarType::ArrayDecimal),
+        _ => None,
+    }
+}
+
+fn array_element_type(array_type: VarType) -> Option<VarType> {
+    match array_type {
+        VarType::ArrayInteger => Some(VarType::Integer),
+        VarType::ArrayString => Some(VarType::String),
+        VarType::ArrayBoolean => Some(VarType::Boolean),
+        VarType::ArrayDecimal => Some(VarType::Decimal),
+        _ => None,
+    }
+}
+
+fn is_array_type(var_type: VarType) -> bool {
+    matches!(
+        var_type,
+        VarType::ArrayInteger
+            | VarType::ArrayString
+            | VarType::ArrayBoolean
+            | VarType::ArrayDecimal
+    )
+}
+
+fn is_numeric_type(var_type: VarType) -> bool {
+    matches!(var_type, VarType::Integer | VarType::Decimal)
 }
 
 fn as_decimal(value: &Value) -> Option<Decimal> {
@@ -1430,6 +2440,13 @@ fn value_to_plain_text(value: &Value) -> String {
         Value::Decimal(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Str(s) => s.clone(),
+        Value::Array {
+            items,
+            element_type: _,
+        } => {
+            let rendered: Vec<String> = items.iter().map(value_to_plain_text).collect();
+            format!("[{}]", rendered.join(", "))
+        }
     }
 }
 

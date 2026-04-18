@@ -81,6 +81,10 @@ pub enum VarType {
     String,
     Boolean,
     Decimal,
+    ArrayInteger,
+    ArrayString,
+    ArrayBoolean,
+    ArrayDecimal,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +150,12 @@ pub enum PrepStatement {
     },
     VarDecl(VarDecl),
     VarAssign(VarAssign),
+    Call {
+        name: String,
+        args: Vec<Expr>,
+        line: usize,
+        column: usize,
+    },
     IfElse(PrepIfElse),
 }
 

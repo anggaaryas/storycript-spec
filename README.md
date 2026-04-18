@@ -68,9 +68,9 @@ StoryScript uses:
 - `#PREP` for state mutation and engine directives (`@bg`, `@bgm`, `@sfx`)
 - `#STORY` for narration, dialogue, branching (`if` / `else if` / `else`), transitions, and standalone variable output (`$var`)
 - Numeric expressions with `+`, `-`, `*`, `/`, `%` (modulo is integer-only)
-- Built-ins: `abs(x)`, `rand()`, `rand(min, max)`, `pick([a, b, ...])`
+- Built-ins: `abs(x)`, `rand()`, `rand(min, max)`, `pick(array)`, `pick(count, array)`, `array_push`, `array_pop`, `array_strip`, `array_clear`, `array_contains`, `array_size`, `array_join`, `array_get`, `array_insert`, `array_remove`
 - `${var}` inline interpolation in string literals across all phases (`\$` for literal dollar)
-- Typed declarations in `* INIT` using `as integer|string|boolean|decimal`
+- Typed declarations in `* INIT` using `as integer|string|boolean|decimal|array<...>`
 - Typed local declarations in `#PREP` using the same shape: `$name as <type> = <expr>`
 - Variable type is immutable after declaration
 
@@ -95,7 +95,9 @@ Built-in notes:
 	- decimal target -> decimal random
 - `rand(min, max)` is inclusive.
 - decimal assignment allows integer/decimal bounds for `rand(min, max)`.
-- decimal assignment allows integer/decimal candidates for `pick([ ... ])`.
+- decimal assignment allows integer/decimal candidates for `pick(array)` and decimal array probes in `array_contains`.
+- mutating array functions (`array_push`, `array_strip`, `array_clear`, `array_insert`) are valid in `#PREP` statement form and forbidden in `#STORY`.
+- collection scalar arguments (`value`, `index`, `count`, `string_separator`) must be literal or `$variable`.
 
 Minimal example:
 

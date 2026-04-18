@@ -57,6 +57,9 @@ pub enum DiagnosticCode {
     RDivideByZero,
     RModuloByZero,
     RNumericOverflow,
+    RArrayEmpty,
+    RArrayIndexOutOfRange,
+    RArraySampleCountInvalid,
 }
 
 impl fmt::Display for DiagnosticCode {
@@ -112,6 +115,9 @@ impl fmt::Display for DiagnosticCode {
             Self::RDivideByZero => "R_DIVIDE_BY_ZERO",
             Self::RModuloByZero => "R_MODULO_BY_ZERO",
             Self::RNumericOverflow => "R_NUMERIC_OVERFLOW",
+            Self::RArrayEmpty => "R_ARRAY_EMPTY",
+            Self::RArrayIndexOutOfRange => "R_ARRAY_INDEX_OUT_OF_RANGE",
+            Self::RArraySampleCountInvalid => "R_ARRAY_SAMPLE_COUNT_INVALID",
         };
         write!(f, "{}", s)
     }

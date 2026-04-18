@@ -1,0 +1,60 @@
+// Feature: Array type + collection built-ins
+// Focus: array<type> declarations, [] literals, mutators, accessors, pick(count, array)
+// Coverage: happy path + boundary behavior + variable/literal params + failure mapping notes
+
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    $prices as array<decimal> = [1, 2.5, 3.75]
+    $names as array<string> = ["Ari", "Bea", "Cora"]
+    $flags as array<boolean> = [true, false]
+
+    $sample_count as integer = 2
+    $zero as integer = 0
+    $join_sep as string = " | "
+
+    @actor SYS "System"
+    @start array_demo
+}
+
+* array_demo {
+    #PREP
+    array_push($nums, 4)
+
+    $picked as array<integer> = pick($sample_count, $nums)
+    $picked_literal_count as array<integer> = pick(2, $nums)
+    $empty_pick as array<integer> = pick($zero, $nums)
+
+    $contains_decimal_probe as boolean = array_contains($prices, 2)
+    $picked_size as integer = array_size($picked)
+    $picked_literal_size as integer = array_size($picked_literal_count)
+    $empty_size as integer = array_size($empty_pick)
+
+    $joined_names as string = array_join($names, $join_sep)
+    $joined_names_literal_sep as string = array_join($names, " / ")
+    $first_name as string = array_get($names, 0)
+
+    $popped as integer = array_pop($nums)
+    $removed as integer = array_remove($nums, 1)
+    array_insert($nums, 1, 99)
+    array_strip($nums, 99)
+
+    if ($zero == 0) {
+        array_clear($flags)
+    }
+
+    #STORY
+    SYS: "picked_size=${picked_size}, picked_literal_size=${picked_literal_size}, empty_size=${empty_size}"
+    SYS: "contains_decimal_probe=${contains_decimal_probe}"
+    SYS: "joined_names=${joined_names}"
+    SYS: "joined_names_literal_sep=${joined_names_literal_sep}"
+    SYS: "first_name=${first_name}, popped=${popped}, removed=${removed}"
+    @end
+}
+
+// Failure mapping notes (examples):
+// - ARR001 -> E_FUNCTION_ARGUMENT_INVALID: array_get($nums, abs(1))
+// - ARR002 -> E_FUNCTION_ARGUMENT_INVALID: array_size(pick($sample_count, $nums))
+// - ARR005 -> E_FUNCTION_CONTEXT_INVALID: calling array_push in #STORY
+// - ARR010 -> R_ARRAY_SAMPLE_COUNT_INVALID: pick($sample_count, $nums) when count > array_size($nums)
+// - ARR011 -> R_ARRAY_INDEX_OUT_OF_RANGE: array_get($nums, 99)
+// - ARR012 -> R_ARRAY_EMPTY: array_pop([]) with known array target context

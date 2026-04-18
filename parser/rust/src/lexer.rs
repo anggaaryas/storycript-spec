@@ -175,6 +175,7 @@ impl Lexer {
             "string" => Token::TypeString,
             "boolean" => Token::TypeBoolean,
             "decimal" => Token::TypeDecimal,
+            "array" => Token::TypeArray,
             "true" => Token::BoolLit(true),
             "false" => Token::BoolLit(false),
             "STOP" => Token::Stop,

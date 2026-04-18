@@ -43,6 +43,7 @@ pub fn validate(script: &Script) -> Vec<Diagnostic> {
             var.line,
             var.column,
             Some(var.var_type),
+            true,
             &declared_vars,
             "INIT",
             &mut diags,
@@ -370,6 +371,7 @@ fn validate_prep_statements(
                     decl.line,
                     decl.column,
                     Some(decl.var_type),
+                    true,
                     scoped_vars,
                     scene,
                     diags,
@@ -412,6 +414,7 @@ fn validate_prep_statements(
                     assign.line,
                     assign.column,
                     declared_type,
+                    true,
                     scoped_vars,
                     scene,
                     diags,
@@ -479,7 +482,12 @@ fn validate_prep_statements(
                                         ));
                                 }
                             }
-                            VarType::String | VarType::Boolean => {
+                            VarType::String
+                            | VarType::Boolean
+                            | VarType::ArrayInteger
+                            | VarType::ArrayString
+                            | VarType::ArrayBoolean
+                            | VarType::ArrayDecimal => {
                                 diags.push(Diagnostic::new(
                                         DiagnosticCode::EVariableCompoundAssignInvalid,
                                         format!(
@@ -508,6 +516,7 @@ fn validate_prep_statements(
                     if_else.line,
                     if_else.column,
                     None,
+                    true,
                     scoped_vars,
                     scene,
                     diags,
@@ -543,6 +552,25 @@ fn validate_prep_statements(
                         diags,
                     );
                 }
+            }
+            PrepStatement::Call {
+                name,
+                args,
+                line,
+                column,
+            } => {
+                let _ = infer_call_type(
+                    name,
+                    args,
+                    *line,
+                    *column,
+                    None,
+                    true,
+                    true,
+                    scoped_vars,
+                    scene,
+                    diags,
+                );
             }
             PrepStatement::BgDirective { path, line, column } => {
                 validate_interpolated_string(path, *line, *column, scoped_vars, scene, diags);
@@ -684,6 +712,7 @@ fn validate_story_statements(
                             opt.line,
                             opt.column,
                             None,
+                            false,
                             declared_vars,
                             scene,
                             diags,
@@ -742,6 +771,7 @@ fn validate_story_statements(
                     if_else.line,
                     if_else.column,
                     None,
+                    false,
                     declared_vars,
                     scene,
                     diags,
@@ -807,6 +837,7 @@ fn infer_expr_type(
     fallback_line: usize,
     fallback_column: usize,
     assignment_target: Option<VarType>,
+    allow_mutating_calls: bool,
     declared_vars: &VarTypes,
     scene: &str,
     diags: &mut Vec<Diagnostic>,
@@ -851,27 +882,29 @@ fn infer_expr_type(
             *line,
             *column,
             assignment_target,
+            allow_mutating_calls,
+            false,
             declared_vars,
             scene,
             diags,
         ),
-        Expr::ListLit { .. } => {
-            diags.push(Diagnostic::new(
-                DiagnosticCode::EExpressionTypeInvalid,
-                "List literals are only valid as arguments to pick([ ... ])",
-                Phase::Validation,
-                scene,
-                fallback_line,
-                fallback_column,
-            ));
-            None
-        }
+        Expr::ListLit { items, .. } => infer_list_literal_type(
+            items,
+            fallback_line,
+            fallback_column,
+            assignment_target,
+            allow_mutating_calls,
+            declared_vars,
+            scene,
+            diags,
+        ),
         Expr::BinOp { left, op, right } => {
             let left_type = infer_expr_type(
                 left,
                 fallback_line,
                 fallback_column,
                 assignment_target,
+                allow_mutating_calls,
                 declared_vars,
                 scene,
                 diags,
@@ -881,6 +914,7 @@ fn infer_expr_type(
                 fallback_line,
                 fallback_column,
                 assignment_target,
+                allow_mutating_calls,
                 declared_vars,
                 scene,
                 diags,
@@ -986,6 +1020,8 @@ fn infer_call_type(
     line: usize,
     column: usize,
     assignment_target: Option<VarType>,
+    allow_mutating_calls: bool,
+    allow_void_return: bool,
     declared_vars: &VarTypes,
     scene: &str,
     diags: &mut Vec<Diagnostic>,
@@ -1009,6 +1045,7 @@ fn infer_call_type(
                 line,
                 column,
                 assignment_target,
+                allow_mutating_calls,
                 declared_vars,
                 scene,
                 diags,
@@ -1067,6 +1104,7 @@ fn infer_call_type(
                         line,
                         column,
                         assignment_target,
+                        allow_mutating_calls,
                         declared_vars,
                         scene,
                         diags,
@@ -1076,6 +1114,7 @@ fn infer_call_type(
                         line,
                         column,
                         assignment_target,
+                        allow_mutating_calls,
                         declared_vars,
                         scene,
                         diags,
@@ -1147,11 +1186,11 @@ fn infer_call_type(
                 }
             }
         }
-        "pick" => {
-            if args.len() != 1 {
+        "array_push" => {
+            if args.len() != 2 {
                 diags.push(Diagnostic::new(
                     DiagnosticCode::EFunctionArityInvalid,
-                    format!("pick() expects exactly 1 argument, found {}", args.len()),
+                    format!("array_push() expects exactly 2 arguments, found {}", args.len()),
                     Phase::Validation,
                     scene,
                     line,
@@ -1160,25 +1199,10 @@ fn infer_call_type(
                 return None;
             }
 
-            let values = match &args[0] {
-                Expr::ListLit { items, .. } => items,
-                _ => {
-                    diags.push(Diagnostic::new(
-                        DiagnosticCode::EFunctionArgumentInvalid,
-                        "pick() expects a list literal argument: pick([a, b, ...])",
-                        Phase::Validation,
-                        scene,
-                        line,
-                        column,
-                    ));
-                    return None;
-                }
-            };
-
-            if values.is_empty() {
+            if !allow_mutating_calls {
                 diags.push(Diagnostic::new(
-                    DiagnosticCode::EListEmpty,
-                    "pick() requires a non-empty candidate list",
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_push() is not allowed in this phase",
                     Phase::Validation,
                     scene,
                     line,
@@ -1187,104 +1211,786 @@ fn infer_call_type(
                 return None;
             }
 
-            if let Some(target) = assignment_target {
-                match target {
-                    VarType::Decimal => {
-                        for value in values {
-                            let ty = infer_expr_type(
-                                value,
-                                line,
-                                column,
-                                assignment_target,
-                                declared_vars,
-                                scene,
-                                diags,
-                            )?;
-                            if !is_numeric_type(ty) {
-                                diags.push(Diagnostic::new(
-                                    DiagnosticCode::EFunctionArgumentInvalid,
-                                    format!(
-                                        "pick() for decimal assignment accepts only integer/decimal candidates, found {}",
-                                        type_name(ty)
-                                    ),
-                                    Phase::Validation,
-                                    scene,
-                                    line,
-                                    column,
-                                ));
-                                return None;
-                            }
-                        }
-                        return Some(VarType::Decimal);
-                    }
-                    _ => {
-                        for value in values {
-                            let ty = infer_expr_type(
-                                value,
-                                line,
-                                column,
-                                assignment_target,
-                                declared_vars,
-                                scene,
-                                diags,
-                            )?;
-                            if !is_assignable(target, ty) {
-                                diags.push(Diagnostic::new(
-                                    DiagnosticCode::EFunctionArgumentInvalid,
-                                    format!(
-                                        "pick() candidate type {} is incompatible with assignment target {}",
-                                        type_name(ty),
-                                        type_name(target)
-                                    ),
-                                    Phase::Validation,
-                                    scene,
-                                    line,
-                                    column,
-                                ));
-                                return None;
-                            }
-                        }
-                        return Some(target);
-                    }
-                }
-            }
-
-            let first_type = infer_expr_type(
-                &values[0],
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_push",
                 line,
                 column,
                 None,
+                allow_mutating_calls,
                 declared_vars,
                 scene,
                 diags,
             )?;
-            for value in values.iter().skip(1) {
-                let ty = infer_expr_type(
-                    value,
+            let element_ty = array_element_type(array_ty)?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_push() value argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let value_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(element_ty),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if !is_assignable(element_ty, value_ty) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_push() value type {} is incompatible with {}",
+                        type_name(value_ty),
+                        type_name(element_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if allow_void_return {
+                return None;
+            }
+
+            diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionContextInvalid,
+                "array_push() returns void and cannot be used as an expression",
+                Phase::Validation,
+                scene,
+                line,
+                column,
+            ));
+            None
+        }
+        "array_pop" => {
+            if args.len() != 1 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_pop() expects exactly 1 argument, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !allow_mutating_calls {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_pop() is not allowed in this phase",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_pop",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            array_element_type(array_ty)
+        }
+        "array_strip" => {
+            if args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_strip() expects exactly 2 arguments, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !allow_mutating_calls {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_strip() is not allowed in this phase",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_strip",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            let element_ty = array_element_type(array_ty)?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_strip() value argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let value_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(element_ty),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            let valid = if element_ty == VarType::Decimal {
+                is_numeric_type(value_ty)
+            } else {
+                is_assignable(element_ty, value_ty)
+            };
+            if !valid {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_strip() value type {} is incompatible with {}",
+                        type_name(value_ty),
+                        type_name(element_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if allow_void_return {
+                return None;
+            }
+
+            diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionContextInvalid,
+                "array_strip() returns void and cannot be used as an expression",
+                Phase::Validation,
+                scene,
+                line,
+                column,
+            ));
+            None
+        }
+        "array_clear" => {
+            if args.len() != 1 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_clear() expects exactly 1 argument, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !allow_mutating_calls {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_clear() is not allowed in this phase",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let _ = infer_array_argument_type(
+                &args[0],
+                "array_clear",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            if allow_void_return {
+                return None;
+            }
+
+            diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionContextInvalid,
+                "array_clear() returns void and cannot be used as an expression",
+                Phase::Validation,
+                scene,
+                line,
+                column,
+            ));
+            None
+        }
+        "array_contains" => {
+            if args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!(
+                        "array_contains() expects exactly 2 arguments, found {}",
+                        args.len()
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_contains",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            let element_ty = array_element_type(array_ty)?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_contains() value argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let probe_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(element_ty),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            let valid = if element_ty == VarType::Decimal {
+                is_numeric_type(probe_ty)
+            } else {
+                is_assignable(element_ty, probe_ty)
+            };
+            if !valid {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_contains() value type {} is incompatible with {}",
+                        type_name(probe_ty),
+                        type_name(element_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            Some(VarType::Boolean)
+        }
+        "array_size" => {
+            if args.len() != 1 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_size() expects exactly 1 argument, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let _ = infer_array_argument_type(
+                &args[0],
+                "array_size",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            Some(VarType::Integer)
+        }
+        "array_join" => {
+            if args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_join() expects exactly 2 arguments, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let _ = infer_array_argument_type(
+                &args[0],
+                "array_join",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_join() separator argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let separator_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(VarType::String),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if separator_ty != VarType::String {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_join() separator must be string, found {}",
+                        type_name(separator_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            Some(VarType::String)
+        }
+        "array_get" => {
+            if args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!("array_get() expects exactly 2 arguments, found {}", args.len()),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_get",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_get() index argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let index_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(VarType::Integer),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if index_ty != VarType::Integer {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_get() index must be integer, found {}",
+                        type_name(index_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            array_element_type(array_ty)
+        }
+        "array_insert" => {
+            if args.len() != 3 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!(
+                        "array_insert() expects exactly 3 arguments, found {}",
+                        args.len()
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !allow_mutating_calls {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_insert() is not allowed in this phase",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_insert",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            let element_ty = array_element_type(array_ty)?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_insert() index argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+            let index_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(VarType::Integer),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if index_ty != VarType::Integer {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_insert() index must be integer, found {}",
+                        type_name(index_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !is_scalar_argument_source(&args[2]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_insert() value argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+            let value_ty = infer_expr_type(
+                &args[2],
+                line,
+                column,
+                Some(element_ty),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if !is_assignable(element_ty, value_ty) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_insert() value type {} is incompatible with {}",
+                        type_name(value_ty),
+                        type_name(element_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if allow_void_return {
+                return None;
+            }
+
+            diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionContextInvalid,
+                "array_insert() returns void and cannot be used as an expression",
+                Phase::Validation,
+                scene,
+                line,
+                column,
+            ));
+            None
+        }
+        "array_remove" => {
+            if args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!(
+                        "array_remove() expects exactly 2 arguments, found {}",
+                        args.len()
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !allow_mutating_calls {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionContextInvalid,
+                    "array_remove() is not allowed in this phase",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_ty = infer_array_argument_type(
+                &args[0],
+                "array_remove",
+                line,
+                column,
+                None,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            if !is_scalar_argument_source(&args[1]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "array_remove() index argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+            let index_ty = infer_expr_type(
+                &args[1],
+                line,
+                column,
+                Some(VarType::Integer),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if index_ty != VarType::Integer {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "array_remove() index must be integer, found {}",
+                        type_name(index_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            array_element_type(array_ty)
+        }
+        "pick" => {
+            if args.len() != 1 && args.len() != 2 {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArityInvalid,
+                    format!(
+                        "pick() expects 1 or 2 arguments, found {}",
+                        args.len()
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if args.len() == 1 {
+                if let Expr::ListLit { items, .. } = &args[0] {
+                    if items.is_empty() {
+                        diags.push(Diagnostic::new(
+                            DiagnosticCode::EListEmpty,
+                            "pick() requires a non-empty candidate list",
+                            Phase::Validation,
+                            scene,
+                            line,
+                            column,
+                        ));
+                        return None;
+                    }
+                }
+
+                let array_ty = infer_array_argument_type(
+                    &args[0],
+                    "pick",
                     line,
                     column,
                     None,
+                    allow_mutating_calls,
                     declared_vars,
                     scene,
                     diags,
                 )?;
-                if ty != first_type {
-                    diags.push(Diagnostic::new(
-                        DiagnosticCode::EFunctionArgumentInvalid,
-                        format!(
-                            "pick() candidates must share one type outside assignment context, found {} and {}",
-                            type_name(first_type),
-                            type_name(ty)
-                        ),
-                        Phase::Validation,
-                        scene,
-                        line,
-                        column,
-                    ));
-                    return None;
-                }
+                return array_element_type(array_ty);
             }
-            Some(first_type)
+
+            if !is_scalar_argument_source(&args[0]) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "pick(count, array) count argument must be a literal or $variable",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+            let count_ty = infer_expr_type(
+                &args[0],
+                line,
+                column,
+                Some(VarType::Integer),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            if count_ty != VarType::Integer {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "pick(count, array) requires integer count, found {}",
+                        type_name(count_ty)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            let array_target_hint = assignment_target.filter(|t| is_array_type(*t));
+            let array_ty = infer_array_argument_type(
+                &args[1],
+                "pick",
+                line,
+                column,
+                array_target_hint,
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+            Some(array_ty)
         }
         _ => {
             diags.push(Diagnostic::new(
@@ -1298,6 +2004,228 @@ fn infer_call_type(
             None
         }
     }
+}
+
+fn infer_list_literal_type(
+    items: &[Expr],
+    line: usize,
+    column: usize,
+    assignment_target: Option<VarType>,
+    allow_mutating_calls: bool,
+    declared_vars: &VarTypes,
+    scene: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<VarType> {
+    let expected_element = assignment_target.and_then(array_element_type);
+
+    if items.is_empty() {
+        if let Some(element_type) = expected_element {
+            return array_type_for_element(element_type);
+        }
+
+        diags.push(Diagnostic::new(
+            DiagnosticCode::EFunctionContextInvalid,
+            "Empty array literal [] requires known target array type context",
+            Phase::Validation,
+            scene,
+            line,
+            column,
+        ));
+        return None;
+    }
+
+    if let Some(expected) = expected_element {
+        for item in items {
+            let item_type = infer_expr_type(
+                item,
+                line,
+                column,
+                Some(expected),
+                allow_mutating_calls,
+                declared_vars,
+                scene,
+                diags,
+            )?;
+
+            if is_array_type(item_type) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    "Nested arrays are not supported",
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+
+            if !is_assignable(expected, item_type) {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "Array literal element type {} is incompatible with {}",
+                        type_name(item_type),
+                        type_name(expected)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+        }
+
+        return array_type_for_element(expected);
+    }
+
+    let mut inferred_element: Option<VarType> = None;
+    for item in items {
+        let item_type = infer_expr_type(
+            item,
+            line,
+            column,
+            None,
+            allow_mutating_calls,
+            declared_vars,
+            scene,
+            diags,
+        )?;
+
+        if is_array_type(item_type) {
+            diags.push(Diagnostic::new(
+                DiagnosticCode::EFunctionArgumentInvalid,
+                "Nested arrays are not supported",
+                Phase::Validation,
+                scene,
+                line,
+                column,
+            ));
+            return None;
+        }
+
+        inferred_element = match inferred_element {
+            None => Some(item_type),
+            Some(current) if current == item_type => Some(current),
+            Some(current) if is_numeric_type(current) && is_numeric_type(item_type) => {
+                Some(VarType::Decimal)
+            }
+            Some(current) => {
+                diags.push(Diagnostic::new(
+                    DiagnosticCode::EFunctionArgumentInvalid,
+                    format!(
+                        "Array literal elements must share one scalar type, found {} and {}",
+                        type_name(current),
+                        type_name(item_type)
+                    ),
+                    Phase::Validation,
+                    scene,
+                    line,
+                    column,
+                ));
+                return None;
+            }
+        };
+    }
+
+    array_type_for_element(inferred_element?)
+}
+
+fn infer_array_argument_type(
+    expr: &Expr,
+    function_name: &str,
+    line: usize,
+    column: usize,
+    assignment_target_hint: Option<VarType>,
+    allow_mutating_calls: bool,
+    declared_vars: &VarTypes,
+    scene: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<VarType> {
+    if !is_array_argument_source(expr) {
+        diags.push(Diagnostic::new(
+            DiagnosticCode::EFunctionArgumentInvalid,
+            format!(
+                "{}() array argument must be a $variable or array literal",
+                function_name
+            ),
+            Phase::Validation,
+            scene,
+            line,
+            column,
+        ));
+        return None;
+    }
+
+    let ty = infer_expr_type(
+        expr,
+        line,
+        column,
+        assignment_target_hint,
+        allow_mutating_calls,
+        declared_vars,
+        scene,
+        diags,
+    )?;
+
+    if !is_array_type(ty) {
+        diags.push(Diagnostic::new(
+            DiagnosticCode::EFunctionArgumentInvalid,
+            format!("{}() requires array argument", function_name),
+            Phase::Validation,
+            scene,
+            line,
+            column,
+        ));
+        return None;
+    }
+
+    Some(ty)
+}
+
+fn is_scalar_argument_source(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::IntLit(_)
+            | Expr::DecimalLit(_)
+            | Expr::BoolLit(_)
+            | Expr::StringLit(_)
+            | Expr::VarRef { .. }
+    )
+}
+
+fn is_array_argument_source(expr: &Expr) -> bool {
+    matches!(expr, Expr::VarRef { .. } | Expr::ListLit { .. })
+}
+
+fn array_element_type(var_type: VarType) -> Option<VarType> {
+    match var_type {
+        VarType::ArrayInteger => Some(VarType::Integer),
+        VarType::ArrayString => Some(VarType::String),
+        VarType::ArrayBoolean => Some(VarType::Boolean),
+        VarType::ArrayDecimal => Some(VarType::Decimal),
+        _ => None,
+    }
+}
+
+fn array_type_for_element(element_type: VarType) -> Option<VarType> {
+    match element_type {
+        VarType::Integer => Some(VarType::ArrayInteger),
+        VarType::String => Some(VarType::ArrayString),
+        VarType::Boolean => Some(VarType::ArrayBoolean),
+        VarType::Decimal => Some(VarType::ArrayDecimal),
+        _ => None,
+    }
+}
+
+fn is_array_type(var_type: VarType) -> bool {
+    matches!(
+        var_type,
+        VarType::ArrayInteger
+            | VarType::ArrayString
+            | VarType::ArrayBoolean
+            | VarType::ArrayDecimal
+    )
 }
 
 fn operator_symbol(op: &BinOperator) -> &'static str {
@@ -1330,6 +2258,10 @@ fn type_name(var_type: VarType) -> &'static str {
         VarType::String => "string",
         VarType::Boolean => "boolean",
         VarType::Decimal => "decimal",
+        VarType::ArrayInteger => "array<integer>",
+        VarType::ArrayString => "array<string>",
+        VarType::ArrayBoolean => "array<boolean>",
+        VarType::ArrayDecimal => "array<decimal>",
     }
 }
 
@@ -2011,5 +2943,88 @@ mod tests {
 "#;
         let diags = parse_and_validate(src);
         assert!(diags.iter().any(|d| d.code == DiagnosticCode::ESyntax));
+    }
+
+    #[test]
+    fn test_array_collection_happy_path() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    $prices as array<decimal> = [1, 2.5]
+    $count as integer = 2
+    $sep as string = ", "
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    array_push($nums, 4)
+    $picked as array<integer> = pick($count, $nums)
+    $has_price as boolean = array_contains($prices, 2)
+    $joined as string = array_join($nums, $sep)
+    $first as integer = array_get($nums, 0)
+    $removed as integer = array_remove($nums, 1)
+
+    #STORY
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        let errors: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_array_scalar_argument_shape_rejected() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    @actor A "Alice"
+    @start main
+}
+* main {
+    #PREP
+    $v as integer = array_get($nums, abs(1))
+
+    #STORY
+    @end
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EFunctionArgumentInvalid
+                && d.message.contains("literal or $variable")
+        }));
+    }
+
+    #[test]
+    fn test_mutating_array_call_forbidden_in_story() {
+        let src = r#"
+* INIT {
+    $nums as array<integer> = [1, 2, 3]
+    @actor A "Alice"
+    @start main
+}
+* next {
+    #STORY
+    @end
+}
+* main {
+    #STORY
+    if (array_pop($nums) == 1) {
+        @jump next
+    } else {
+        @end
+    }
+}
+"#;
+
+        let diags = parse_and_validate(src);
+        assert!(diags.iter().any(|d| {
+            d.code == DiagnosticCode::EFunctionContextInvalid
+                && d.message.contains("not allowed in this phase")
+        }));
     }
 }
