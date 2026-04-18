@@ -3,9 +3,21 @@ name = "storycript-player"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:crossterm"]
+
 [dependencies]
 storycript-parser = { path = "../parser/rust" }
-ratatui = "0.28"
-crossterm = "0.28"
+ratatui = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true }
 rust_decimal = "1.41.0"
 rand = "0.10.1"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+
+[[bin]]
+name = "storycript-player"
+path = "src/main.rs"
+required-features = ["tui"]

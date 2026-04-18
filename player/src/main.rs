@@ -1,5 +1,3 @@
-mod engine;
-
 use std::env;
 use std::fs;
 use std::io;
@@ -13,64 +11,45 @@ use crossterm::{
 };
 use ratatui::{prelude::*, widgets::*};
 
-use engine::{Engine, StepResult, Value};
+use storycript_player::{StepResult, StoryPlayer, Value};
 
 // ===========================================================================
 // Player state
 // ===========================================================================
 
 struct App {
-    script_name: String,
-    engine: Engine,
-    history: Vec<StepResult>,
-    current: Option<StepResult>,
+    player: StoryPlayer,
     scroll_offset: u16,
 }
 
 impl App {
-    fn new(script_name: String, engine: Engine) -> Self {
-        let mut app = App {
-            script_name,
-            engine,
-            history: Vec::new(),
-            current: None,
+    fn new(player: StoryPlayer) -> Self {
+        App {
+            player,
             scroll_offset: 0,
-        };
-        app.advance();
-        app
+        }
+    }
+
+    fn current(&self) -> Option<&StepResult> {
+        self.player.current()
+    }
+
+    fn history(&self) -> &[StepResult] {
+        self.player.history()
+    }
+
+    fn script_name(&self) -> &str {
+        self.player.script_name()
     }
 
     fn advance(&mut self) {
-        if let Some(current) = self.current.take() {
-            self.history.push(current);
-        }
-        match self.engine.step() {
-            Some(result) => self.current = Some(result),
-            None => self.current = Some(StepResult::End),
-        }
+        self.player.advance();
         self.scroll_offset = 0;
     }
 
     fn select_choice(&mut self, index: usize) {
-        if let Some(StepResult::Choices(ref choices)) = self.current {
-            if index < choices.len() {
-                let choice = choices[index].clone();
-                // Move current choices display to history
-                if let Some(current) = self.current.take() {
-                    self.history.push(current);
-                }
-                // Record the player's selection
-                self.history
-                    .push(StepResult::Narration(format!("▸ {}", choice.text)));
-                // Enter target scene
-                self.engine.select_choice(&choice);
-                // Advance to next display event
-                match self.engine.step() {
-                    Some(result) => self.current = Some(result),
-                    None => self.current = Some(StepResult::End),
-                }
-                self.scroll_offset = 0;
-            }
+        if self.player.select_choice(index) {
+            self.scroll_offset = 0;
         }
     }
 }
@@ -199,7 +178,7 @@ fn run_app(
                     }
                     KeyCode::Enter => {
                         if let Some(player) = root_app.player.as_mut() {
-                            match &player.current {
+                            match player.current() {
                                 Some(StepResult::Narration(_))
                                 | Some(StepResult::Dialogue { .. }) => player.advance(),
                                 Some(StepResult::End) | Some(StepResult::Choices(_)) | None => {}
@@ -274,13 +253,13 @@ fn render_player(frame: &mut Frame, app: &App) {
 
 fn render_player_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut parts: Vec<String> = vec![
-        format!("File: {}", app.script_name),
-        format!("Scene: {}", app.engine.current_scene),
+        format!("File: {}", app.script_name()),
+        format!("Scene: {}", app.player.engine().current_scene),
     ];
-    if let Some(ref bg) = app.engine.bg {
+    if let Some(ref bg) = app.player.engine().bg {
         parts.push(format!("BG: {}", bg));
     }
-    if let Some(ref bgm) = app.engine.bgm {
+    if let Some(ref bgm) = app.player.engine().bgm {
         parts.push(format!("BGM: {}", bgm));
     }
     let info = parts.join(" │ ");
@@ -338,13 +317,13 @@ fn build_content_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     // History (dimmed)
-    for entry in &app.history {
+    for entry in app.history() {
         append_step_lines(&mut lines, entry, true);
         lines.push(Line::from(""));
     }
 
     // Current (bright)
-    if let Some(ref current) = app.current {
+    if let Some(current) = app.current() {
         append_step_lines(&mut lines, current, false);
     }
 
@@ -472,7 +451,7 @@ fn append_step_lines(lines: &mut Vec<Line<'static>>, result: &StepResult, dimmed
 
 fn render_player_footer(frame: &mut Frame, app: &App, area: Rect) {
     // Sort variables by name for consistent display
-    let mut var_pairs: Vec<(&String, &Value)> = app.engine.variables.iter().collect();
+    let mut var_pairs: Vec<(&String, &Value)> = app.player.engine().variables.iter().collect();
     var_pairs.sort_by(|a, b| a.0.cmp(b.0));
 
     let var_display: String = var_pairs
@@ -481,7 +460,7 @@ fn render_player_footer(frame: &mut Frame, app: &App, area: Rect) {
         .collect::<Vec<_>>()
         .join("  ");
 
-    let controls = match &app.current {
+    let controls = match app.current() {
         Some(StepResult::Choices(choices)) => {
             format!("[1-{}] Choose  [Q] Back To File Chooser", choices.len())
         }
@@ -672,41 +651,8 @@ fn display_path(path: &Path) -> String {
 }
 
 fn load_player_from_file(path: &Path) -> Result<App, String> {
-    let compile = storycript_parser::compiler::compile_file(path)
-        .map_err(|e| format!("Failed to compile {}: {}", display_path(path), e))?;
-
-    if compile.diagnostics.iter().any(|d| d.is_error()) {
-        return Err(format_diagnostics(
-            &format!("Compile errors in {}", display_path(path)),
-            &compile
-                .diagnostics
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-        ));
-    }
-
-    let script = compile.script.ok_or_else(|| {
-        format!(
-            "Compile failed to produce script for {}",
-            display_path(path)
-        )
-    })?;
-
-    let engine = Engine::new(&script);
-    Ok(App::new(display_path(path), engine))
-}
-
-fn format_diagnostics(title: &str, diags: &[String]) -> String {
-    if diags.is_empty() {
-        return title.to_string();
-    }
-    let details = diags
-        .iter()
-        .map(|diag| format!("- {}", diag))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{}\n{}", title, details)
+    let player = StoryPlayer::from_file(path)?;
+    Ok(App::new(player))
 }
 
 fn actor_color(actor_id: &str) -> Color {
