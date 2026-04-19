@@ -65,7 +65,7 @@ class StoryScriptViewerPage extends StatefulWidget {
 }
 
 class _StoryScriptViewerPageState extends State<StoryScriptViewerPage> {
-  final TextEditingController _sourceController = TextEditingController();
+  final TextEditingController _sourceController = StoryScriptCodeHighlighterController();
   final ScrollController _consoleScroll = ScrollController();
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'keyboard_shortcuts');
   final FocusNode _editorFocusNode = FocusNode(debugLabel: 'story_editor');
