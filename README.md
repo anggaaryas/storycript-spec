@@ -246,6 +246,10 @@ Then build the Android library with `cargo ndk`:
 cargo ndk -t armeabi-v7a -t arm64-v8a -t x86 -t x86_64 -o ../android/app/src/main/jniLibs build --release
 ```
 
+```bash
+cargo build --target aarch64-apple-ios-sim --release
+```
+
 > Note: Ensure you have Flutter installed and that `wasm-pack` is available in your PATH before running these commands.
 
 ## License
